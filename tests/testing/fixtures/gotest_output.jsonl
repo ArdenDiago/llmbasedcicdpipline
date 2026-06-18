@@ -1,0 +1,12 @@
+{"Time":"2026-04-18T00:00:00Z","Action":"run","Package":"example.com/app","Test":"TestAdd"}
+{"Time":"2026-04-18T00:00:00Z","Action":"output","Package":"example.com/app","Test":"TestAdd","Output":"=== RUN   TestAdd\n"}
+{"Time":"2026-04-18T00:00:00Z","Action":"output","Package":"example.com/app","Test":"TestAdd","Output":"--- PASS: TestAdd (0.00s)\n"}
+{"Time":"2026-04-18T00:00:00Z","Action":"pass","Package":"example.com/app","Test":"TestAdd","Elapsed":0.0}
+{"Time":"2026-04-18T00:00:00Z","Action":"run","Package":"example.com/app","Test":"TestDivide"}
+{"Time":"2026-04-18T00:00:00Z","Action":"output","Package":"example.com/app","Test":"TestDivide","Output":"=== RUN   TestDivide\n"}
+{"Time":"2026-04-18T00:00:00Z","Action":"output","Package":"example.com/app","Test":"TestDivide","Output":"    math_test.go:42: expected 5, got 3\n"}
+{"Time":"2026-04-18T00:00:00Z","Action":"output","Package":"example.com/app","Test":"TestDivide","Output":"--- FAIL: TestDivide (0.00s)\n"}
+{"Time":"2026-04-18T00:00:00Z","Action":"fail","Package":"example.com/app","Test":"TestDivide","Elapsed":0.0}
+{"Time":"2026-04-18T00:00:00Z","Action":"run","Package":"example.com/app","Test":"TestSkipped"}
+{"Time":"2026-04-18T00:00:00Z","Action":"output","Package":"example.com/app","Test":"TestSkipped","Output":"--- SKIP: TestSkipped\n"}
+{"Time":"2026-04-18T00:00:00Z","Action":"skip","Package":"example.com/app","Test":"TestSkipped","Elapsed":0.0}

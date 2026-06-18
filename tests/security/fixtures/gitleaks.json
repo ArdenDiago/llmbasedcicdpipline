@@ -1,0 +1,22 @@
+[
+  {
+    "Description": "Generic API Key",
+    "StartLine": 12,
+    "EndLine": 12,
+    "StartColumn": 1,
+    "EndColumn": 40,
+    "Match": "API_KEY=\"sk-abcdef0123456789\"",
+    "Secret": "sk-abcdef0123456789",
+    "File": "config/settings.py",
+    "SymlinkFile": "",
+    "Commit": "",
+    "Entropy": 4.7,
+    "Author": "",
+    "Email": "",
+    "Date": "",
+    "Message": "",
+    "Tags": [],
+    "RuleID": "generic-api-key",
+    "Fingerprint": ""
+  }
+]

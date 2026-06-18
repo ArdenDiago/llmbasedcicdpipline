@@ -1,0 +1,94 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from agent.security.scanners import bandit, gitleaks, semgrep, trivy
+
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def _load(name: str) -> str:
+    return (FIXTURES / name).read_text(encoding="utf-8")
+
+
+def test_bandit_parser_extracts_findings_with_cwe():
+    findings = bandit.parse(_load("bandit.json"))
+    assert len(findings) == 2
+
+    b105 = next(f for f in findings if f.rule_id == "B105")
+    assert b105.scanner == "bandit"
+    assert b105.severity == "low"
+    assert b105.confidence == "medium"
+    assert b105.file == "app/auth.py"
+    assert b105.line == 45
+    assert b105.cwe == "CWE-259"
+    assert "hardcoded" in b105.message.lower()
+
+    b301 = next(f for f in findings if f.rule_id == "B301")
+    assert b301.severity == "high"
+    assert b301.cwe == "CWE-502"
+
+
+def test_bandit_parser_handles_invalid_json():
+    assert bandit.parse("not json") == []
+    assert bandit.parse("{}") == []
+
+
+def test_gitleaks_parser_marks_all_as_high_severity():
+    findings = gitleaks.parse(_load("gitleaks.json"))
+    assert len(findings) == 1
+    f = findings[0]
+    assert f.scanner == "gitleaks"
+    assert f.severity == "high"
+    assert f.rule_id == "generic-api-key"
+    assert f.file == "config/settings.py"
+    assert f.line == 12
+    assert f.cwe == "CWE-798"
+
+
+def test_gitleaks_parser_handles_empty():
+    assert gitleaks.parse("") == []
+    assert gitleaks.parse("null") == []
+
+
+def test_semgrep_parser_maps_severity_and_extracts_cwe():
+    findings = semgrep.parse(_load("semgrep.json"))
+    assert len(findings) == 2
+
+    eval_finding = next(f for f in findings if "eval" in f.rule_id)
+    assert eval_finding.scanner == "semgrep"
+    assert eval_finding.severity == "high"  # ERROR → high via alias
+    assert eval_finding.cwe == "CWE-95"
+    assert eval_finding.line == 10
+
+    debug = next(f for f in findings if "debug" in f.rule_id)
+    assert debug.severity == "medium"  # WARNING → medium
+    assert debug.cwe == "CWE-489"
+
+
+def test_trivy_parser_covers_vulns_secrets_misconfigs():
+    findings = trivy.parse(_load("trivy.json"))
+    by_rule = {f.rule_id: f for f in findings}
+
+    assert "CVE-2023-32681" in by_rule
+    vuln = by_rule["CVE-2023-32681"]
+    assert vuln.severity == "medium"
+    assert vuln.cwe == "CWE-200"
+    assert vuln.file == "requirements.txt"
+
+    assert "aws-access-token" in by_rule
+    secret = by_rule["aws-access-token"]
+    assert secret.severity == "critical"
+    assert secret.cwe == "CWE-798"
+    assert secret.line == 3
+
+    assert "DS002" in by_rule
+    misconf = by_rule["DS002"]
+    assert misconf.severity == "high"
+    assert misconf.file == "Dockerfile"
+    assert misconf.line == 5
+
+
+def test_trivy_parser_handles_invalid_json():
+    assert trivy.parse("garbage") == []
+    assert trivy.parse('{"Results": []}') == []

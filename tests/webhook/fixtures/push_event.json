@@ -1,0 +1,32 @@
+{
+  "ref": "refs/heads/main",
+  "before": "0000000000000000000000000000000000000000",
+  "after": "abc123def456abc123def456abc123def4567890",
+  "repository": {
+    "id": 1296269,
+    "name": "Hello-World",
+    "full_name": "octocat/Hello-World",
+    "clone_url": "https://github.com/octocat/Hello-World.git",
+    "default_branch": "main"
+  },
+  "pusher": {
+    "name": "octocat",
+    "email": "octocat@github.com"
+  },
+  "commits": [
+    {
+      "id": "abc123def456abc123def456abc123def4567890",
+      "message": "Add auth module",
+      "added": ["app/auth.py"],
+      "modified": ["app/main.py", "README.md"],
+      "removed": []
+    },
+    {
+      "id": "def456abc123def456abc123def456abc1234567",
+      "message": "Fix lint",
+      "added": [],
+      "modified": ["app/main.py"],
+      "removed": ["app/old.py"]
+    }
+  ]
+}

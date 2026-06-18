@@ -1,0 +1,36 @@
+{
+  "errors": [],
+  "generated_at": "2026-04-18T00:00:00Z",
+  "metrics": {},
+  "results": [
+    {
+      "code": "44 password = 'admin123'\n45 return password\n",
+      "col_offset": 11,
+      "filename": "app/auth.py",
+      "issue_confidence": "MEDIUM",
+      "issue_cwe": {
+        "id": 259,
+        "link": "https://cwe.mitre.org/data/definitions/259.html"
+      },
+      "issue_severity": "LOW",
+      "issue_text": "Possible hardcoded password: 'admin123'",
+      "line_number": 45,
+      "line_range": [44, 45],
+      "more_info": "https://bandit.readthedocs.io/en/1.8.3/plugins/b105_hardcoded_password_string.html",
+      "test_id": "B105",
+      "test_name": "hardcoded_password_string"
+    },
+    {
+      "code": "12 import pickle\n13 data = pickle.loads(user_input)\n",
+      "col_offset": 7,
+      "filename": "app/serializer.py",
+      "issue_confidence": "HIGH",
+      "issue_cwe": {"id": 502},
+      "issue_severity": "HIGH",
+      "issue_text": "Pickle and modules that wrap it can be unsafe when used to deserialize untrusted data.",
+      "line_number": 13,
+      "test_id": "B301",
+      "test_name": "pickle"
+    }
+  ]
+}

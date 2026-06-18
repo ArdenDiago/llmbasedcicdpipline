@@ -1,0 +1,51 @@
+{
+  "numTotalTestSuites": 2,
+  "numPassedTestSuites": 1,
+  "numFailedTestSuites": 1,
+  "numTotalTests": 5,
+  "numPassedTests": 3,
+  "numFailedTests": 2,
+  "numPendingTests": 0,
+  "numTodoTests": 0,
+  "numRuntimeErrorTestSuites": 0,
+  "startTime": 1700000000000,
+  "endTime": 1700000002500,
+  "success": false,
+  "testResults": [
+    {
+      "testFilePath": "/repo/tests/math.test.js",
+      "name": "/repo/tests/math.test.js",
+      "numFailingTests": 0,
+      "testResults": [
+        {"ancestorTitles": [], "title": "add", "fullName": "add", "status": "passed"},
+        {"ancestorTitles": [], "title": "sub", "fullName": "sub", "status": "passed"},
+        {"ancestorTitles": [], "title": "mul", "fullName": "mul", "status": "passed"}
+      ]
+    },
+    {
+      "testFilePath": "/repo/tests/auth.test.js",
+      "name": "/repo/tests/auth.test.js",
+      "numFailingTests": 2,
+      "testResults": [
+        {
+          "ancestorTitles": ["auth"],
+          "title": "logs in valid user",
+          "fullName": "auth logs in valid user",
+          "status": "failed",
+          "failureMessages": [
+            "Error: expect(received).toBe(expected)\n\n  Expected: 200\n  Received: 401"
+          ],
+          "location": {"line": 10, "column": 5}
+        },
+        {
+          "ancestorTitles": ["auth"],
+          "title": "rejects invalid token",
+          "fullName": "auth rejects invalid token",
+          "status": "failed",
+          "failureMessages": ["TypeError: Cannot read properties of undefined"],
+          "location": null
+        }
+      ]
+    }
+  ]
+}

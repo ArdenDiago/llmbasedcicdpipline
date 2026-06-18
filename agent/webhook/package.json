@@ -1,0 +1,27 @@
+{
+  "name": "llm-cicd-webhook",
+  "version": "0.1.0",
+  "description": "GitHub webhook listener for LLM-Assisted CI/CD Security Agent",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "jest"
+  },
+  "dependencies": {
+    "axios": "^1.7.0",
+    "express": "^4.21.0",
+    "express-rate-limit": "^7.4.0"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "supertest": "^7.0.0"
+  },
+  "jest": {
+    "rootDir": "../..",
+    "testMatch": [
+      "<rootDir>/tests/webhook/**/*.test.js"
+    ]
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,51 @@
+{
+  "created": 1700000000.0,
+  "duration": 1.234,
+  "exitcode": 1,
+  "root": "/target",
+  "summary": {
+    "total": 4,
+    "passed": 2,
+    "failed": 1,
+    "error": 1,
+    "skipped": 0
+  },
+  "tests": [
+    {
+      "nodeid": "tests/test_math.py::test_add",
+      "outcome": "passed",
+      "call": {"duration": 0.01, "outcome": "passed"}
+    },
+    {
+      "nodeid": "tests/test_math.py::test_sub",
+      "outcome": "passed"
+    },
+    {
+      "nodeid": "tests/test_auth.py::test_login",
+      "outcome": "failed",
+      "call": {
+        "duration": 0.02,
+        "outcome": "failed",
+        "crash": {
+          "path": "tests/test_auth.py",
+          "lineno": 23,
+          "message": "AssertionError: expected 200 got 401"
+        },
+        "longrepr": "tests/test_auth.py:23: AssertionError: expected 200 got 401\n    assert response.status_code == 200\nE   AssertionError: expected 200 got 401"
+      }
+    },
+    {
+      "nodeid": "tests/test_db.py::test_connect",
+      "outcome": "error",
+      "setup": {
+        "outcome": "error",
+        "crash": {
+          "path": "tests/conftest.py",
+          "lineno": 5,
+          "message": "ConnectionRefusedError: [Errno 111]"
+        },
+        "longrepr": "ConnectionRefusedError"
+      }
+    }
+  ]
+}

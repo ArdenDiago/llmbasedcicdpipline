@@ -1,0 +1,23 @@
+You are evaluating the quality of a code fix. Rate your confidence that this fix is correct.
+
+Original issue:
+{{ issue_description }}
+
+Original code:
+```{{ language }}
+{{ original_code }}
+```
+
+Proposed fix:
+```{{ language }}
+{{ fixed_code }}
+```
+
+Evaluate:
+1. Does the fix address the reported issue?
+2. Does the fix introduce any new bugs?
+3. Does the fix preserve existing behavior?
+4. Is the fix minimal (no unnecessary changes)?
+
+Respond with ONLY a JSON object:
+{"confidence": <0.0-1.0>, "reasoning": "<one sentence>"}

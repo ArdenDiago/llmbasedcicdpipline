@@ -1,0 +1,6 @@
+model                  dataset                      runs  F1 mean  F1 std  P mean  R mean   TP   FP   FN
+----------------------------------------------------------------------------------------------------
+llama3                 python_vulns                    5    0.850   0.056   0.852   0.850    10    2    2
+llama3                 python_vulns_extended           5    0.764   0.045   0.830   0.708    63   13   26
+llama3                 js_vulns                        5    0.770   0.027   0.627   1.000     6    4    0
+llama3                 js_vulns_extended               5    0.756   0.036   0.817   0.704    38    9   16

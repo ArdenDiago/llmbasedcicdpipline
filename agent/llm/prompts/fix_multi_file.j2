@@ -1,0 +1,28 @@
+You are a code repair assistant. Fix the following issue that spans multiple files.
+
+Issue:
+{{ issue_description }}
+
+{% if scanner_finding %}
+Scanner: {{ scanner_finding.scanner }}
+Rule: {{ scanner_finding.rule_id }}
+Severity: {{ scanner_finding.severity }}
+CWE: {{ scanner_finding.cwe }}
+{% endif %}
+
+Affected files:
+{% for file in files %}
+--- {{ file.path }} ({{ file.language }}) ---
+```{{ file.language }}
+{{ file.content }}
+```
+{% endfor %}
+
+Requirements:
+- Fix ONLY the reported issue across all affected files
+- Do not refactor unrelated code
+- Preserve existing code style and formatting
+- The fix must not break existing tests
+
+Respond with a JSON array of file patches:
+[{"path": "<file_path>", "content": "<full corrected file content>"}]

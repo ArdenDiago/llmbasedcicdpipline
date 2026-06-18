@@ -1,0 +1,68 @@
+# Model balancing strategy — see CLAUDE.md for escalation rules
+#
+# Priority: DeepSeek (free) → Haiku → Sonnet → Opus (last resort)
+# NEVER call Opus without two prior failed attempts.
+
+models:
+  deepseek_coder:
+    provider: ollama
+    model_id: deepseek-coder:6.7b
+    host: ${OLLAMA_HOST:-http://localhost:11434}
+    priority: 1  # Always try first
+    cost: free
+
+  haiku:
+    provider: anthropic
+    model_id: claude-haiku-4-5-20251001
+    priority: 2
+    cost: low
+
+  sonnet:
+    provider: anthropic
+    model_id: claude-sonnet-4-6
+    priority: 3
+    cost: medium
+
+  opus:
+    provider: anthropic
+    model_id: claude-opus-4-6
+    priority: 4  # LAST RESORT ONLY
+    cost: high
+
+# Task-to-model mapping
+tasks:
+  error_classification:
+    primary: deepseek_coder
+    fallback: haiku
+    max_tokens_in: 500
+    max_tokens_out: 100
+
+  single_file_fix:
+    primary: deepseek_coder
+    fallback: sonnet
+    max_tokens_in: 3000
+    max_tokens_out: 1000
+
+  multi_file_fix:
+    primary: deepseek_coder
+    fallback: sonnet
+    last_resort: opus
+    max_tokens_in: 8000
+    max_tokens_out: 2000
+
+  pr_body:
+    primary: haiku
+    max_tokens_in: 1000
+    max_tokens_out: 500
+
+  security_analysis:
+    primary: deepseek_coder
+    fallback: sonnet
+    max_tokens_in: 2000
+    max_tokens_out: 800
+
+# Escalation
+escalation:
+  confidence_threshold: 0.5  # Below this → escalate
+  max_attempts: 3            # Max attempts before giving up
+  opus_min_attempt: 3        # Opus only on 3rd attempt

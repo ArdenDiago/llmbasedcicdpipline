@@ -1,0 +1,28 @@
+You are a code repair assistant. Fix the following issue in a single file.
+
+File: {{ file_path }}
+Language: {{ language }}
+
+Issue:
+{{ issue_description }}
+
+{% if scanner_finding %}
+Scanner: {{ scanner_finding.scanner }}
+Rule: {{ scanner_finding.rule_id }}
+Severity: {{ scanner_finding.severity }}
+CWE: {{ scanner_finding.cwe }}
+{% endif %}
+
+Current code:
+```{{ language }}
+{{ file_content }}
+```
+
+Requirements:
+- Fix ONLY the reported issue
+- Do not refactor unrelated code
+- Do not add comments explaining the fix
+- Preserve existing code style and formatting
+- The fix must not break existing tests
+
+Respond with ONLY the corrected file content, no explanation.

@@ -1,0 +1,23 @@
+You are a security analyst. Analyze the following scanner finding and determine if it is a true positive.
+
+Finding:
+Scanner: {{ finding.scanner }}
+Rule: {{ finding.rule_id }}
+Severity: {{ finding.severity }}
+File: {{ finding.file }}
+Line: {{ finding.line }}
+Message: {{ finding.message }}
+{% if finding.cwe %}CWE: {{ finding.cwe }}{% endif %}
+
+Code context:
+```
+{{ code_context }}
+```
+
+Respond with ONLY a JSON object:
+{
+  "true_positive": true/false,
+  "confidence": <0.0-1.0>,
+  "reasoning": "<brief explanation>",
+  "recommended_fix": "<one sentence describing the fix, or null if false positive>"
+}

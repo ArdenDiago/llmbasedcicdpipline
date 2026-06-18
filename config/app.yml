@@ -1,0 +1,32 @@
+# General application configuration
+app:
+  name: llm-cicd-security-agent
+  version: 0.1.0
+  log_level: info  # debug, info, warning, error
+
+# Webhook listener
+webhook:
+  port: 3000
+  max_payload_size_mb: 5
+  rate_limit_per_minute: 100
+
+# Sandbox
+sandbox:
+  timeout_seconds: 600       # 10 minutes max per sandbox
+  cpu_limit: 2               # CPU cores
+  memory_limit: 2g           # RAM limit
+  network_after_clone: false  # Disable network after repo clone
+
+# Test runner
+testing:
+  timeout_seconds: 300  # 5 minutes per test suite
+
+# Security scanners
+scanners:
+  timeout_per_scanner: 180  # 3 minutes per scanner
+  timeout_total: 480        # 8 minutes total
+  enabled:
+    - trivy
+    - gitleaks
+    - bandit
+    - semgrep

@@ -1,0 +1,36 @@
+{
+  "version": "1.100.0",
+  "results": [
+    {
+      "check_id": "python.lang.security.audit.eval-detected.eval-detected",
+      "path": "app/main.py",
+      "start": {"line": 10, "col": 5},
+      "end": {"line": 10, "col": 22},
+      "extra": {
+        "severity": "ERROR",
+        "message": "Detected use of eval(). This can allow arbitrary code execution.",
+        "lines": "    eval(user_input)",
+        "metadata": {
+          "cwe": ["CWE-95: Improper Neutralization of Directives"],
+          "confidence": "HIGH",
+          "category": "security"
+        }
+      }
+    },
+    {
+      "check_id": "python.flask.security.audit.debug-enabled.debug-enabled",
+      "path": "app/main.py",
+      "start": {"line": 50, "col": 1},
+      "end": {"line": 50, "col": 30},
+      "extra": {
+        "severity": "WARNING",
+        "message": "Detected Flask app with debug=True.",
+        "lines": "app.run(debug=True)",
+        "metadata": {
+          "cwe": "CWE-489: Active Debug Code",
+          "confidence": "MEDIUM"
+        }
+      }
+    }
+  ]
+}
