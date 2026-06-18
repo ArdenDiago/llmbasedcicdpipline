@@ -1,0 +1,19 @@
+[project]
+name = "llm-cicd-security-agent"
+version = "0.1.0"
+description = "Autonomous AI-driven CI/CD agent for vulnerability detection and automated remediation"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "Arden Diago"},
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "integration: marks tests requiring Docker daemon",
+]
+
+[tool.bandit]
+exclude_dirs = ["tests", "evaluation"]
