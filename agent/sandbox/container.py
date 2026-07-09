@@ -23,6 +23,37 @@ DEFAULT_TIMEOUT_SECONDS = 600
 DEFAULT_CPU_LIMIT = 2
 DEFAULT_MEM_LIMIT = "2g"
 RESULTS_FILENAME = "results.json"
+REPO_BIND_PATH = "/workspace"
+
+# Runs inside the sandbox container once a repo checkout is mounted read-only
+# at REPO_BIND_PATH. Requires the `agent` package + its deps on PATH, which is
+# true for the control-plane image (see Project/Dockerfile) reused here as the
+# sandbox image (agent/sandbox/image.py). No network calls happen here — the
+# container starts with network_disabled=True; the clone already happened on
+# the host (agent/sandbox/clone.py) before this container was created.
+_REPO_RUNNER_SCRIPT = """
+import json, os
+from dataclasses import asdict
+
+from agent.testing import runner as test_runner
+from agent.security import run_scan
+
+path = "{repo_path}"
+
+try:
+    tests = asdict(test_runner.run(path))
+except Exception as exc:
+    tests = {{"framework": "unknown", "error": f"{{type(exc).__name__}}: {{exc}}"}}
+
+try:
+    scanners = run_scan.run_all(path)
+except Exception as exc:
+    scanners = {{"error": f"{{type(exc).__name__}}: {{exc}}"}}
+
+os.makedirs("/results", exist_ok=True)
+with open("/results/{results_filename}", "w") as f:
+    json.dump({{"tests": tests, "scanners": scanners}}, f)
+""".strip()
 
 
 @dataclass
@@ -37,12 +68,19 @@ class SandboxResult:
     logs_path: str | None = field(default=None, repr=False)
 
 
-def _runner_command(payload: dict[str, Any]) -> list[str]:
+def _runner_command(payload: dict[str, Any], repo_mounted: bool) -> list[str]:
     """Return the command run inside the sandbox.
 
-    Placeholder until testing/security modules are wired: writes a stub
-    results document so the end-to-end path is verifiable.
+    When no repo checkout is mounted (repo_mounted=False), falls back to a
+    stub results document so the end-to-end dispatch path stays verifiable
+    without a real clone (e.g. no repo_url in the payload).
     """
+    if repo_mounted:
+        script = _REPO_RUNNER_SCRIPT.format(
+            repo_path=REPO_BIND_PATH, results_filename=RESULTS_FILENAME
+        )
+        return ["python", "-c", script]
+
     stub = {
         "stage": "sandbox_stub",
         "received": {
@@ -69,22 +107,31 @@ def run_sandbox(
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
     cpu_limit: int = DEFAULT_CPU_LIMIT,
     mem_limit: str = DEFAULT_MEM_LIMIT,
+    repo_path: Path | None = None,
 ) -> SandboxResult:
     """Run an ephemeral sandbox container and return its results.
 
-    The container is always removed — even on error or timeout.
+    If repo_path is given (a host directory already checked out to the
+    target commit — see agent/sandbox/clone.py), it is bind-mounted
+    read-only at REPO_BIND_PATH and the container runs the real test +
+    security scanners against it. Otherwise the container runs the stub
+    path (no repo available to scan). The container is always removed —
+    even on error or timeout.
     """
     container = None
     results_host_dir = Path(tempfile.mkdtemp(prefix=f"sandbox-{uuid.uuid4().hex[:8]}-"))
+    volumes = {str(results_host_dir): {"bind": "/results", "mode": "rw"}}
+    if repo_path is not None:
+        volumes[str(repo_path)] = {"bind": REPO_BIND_PATH, "mode": "ro"}
     try:
         container = client.containers.create(
             image=image,
-            command=_runner_command(payload),
+            command=_runner_command(payload, repo_mounted=repo_path is not None),
             detach=True,
             network_disabled=True,
             read_only=True,
             tmpfs={"/tmp": "size=64m"},
-            volumes={str(results_host_dir): {"bind": "/results", "mode": "rw"}},
+            volumes=volumes,
             mem_limit=mem_limit,
             nano_cpus=cpu_limit * 1_000_000_000,
             cap_drop=["ALL"],
