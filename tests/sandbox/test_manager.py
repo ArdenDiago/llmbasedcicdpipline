@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 
 from agent.pipeline import PipelineResult
 from agent.pr import creator, github_api
-from agent.sandbox.manager import create_app
+from agent.sandbox.manager import _default_validate_factory, create_app
 
 from .conftest import FakeContainer, FakeDockerClient
 
@@ -270,3 +270,64 @@ def test_dispatch_skips_pipeline_without_repo_url(tmp_path_factory):
     assert res.status_code == 200
     assert "pipeline" not in res.json()
     assert calls == []
+
+
+def _validate_with_tests_result(tests_value, tmp_path_factory) -> bool:
+    fake_docker = FakeDockerClient(container=FakeContainer(
+        exit_code=0,
+        results_payload={"tests": tests_value, "scanners": {"findings": []}},
+    ))
+    validate = _default_validate_factory(fake_docker, "img:tag", {"repo_full_name": "o/r"})
+    return validate(tmp_path_factory.mktemp("patched-repo"))
+
+
+def test_validate_passes_when_no_test_framework_detected(tmp_path_factory):
+    """Regression test: 'no test suite exists' (the case testing/CLAUDE.md
+    explicitly says should not fabricate a failure) must still pass
+    validation."""
+    assert _validate_with_tests_result(
+        {"framework": "unknown", "error": "no supported test framework detected"},
+        tmp_path_factory,
+    ) is True
+
+
+def test_validate_passes_when_framework_detected_but_unsupported(tmp_path_factory):
+    assert _validate_with_tests_result(
+        {"framework": "mocha", "error": "unsupported framework: mocha"},
+        tmp_path_factory,
+    ) is True
+
+
+def test_validate_fails_when_test_runner_could_not_execute(tmp_path_factory):
+    """Regression test for the CRITICAL finding that a test suite EXISTING
+    but failing to execute (missing runner binary, no network for `npx
+    jest` under network_disabled=True, a timeout, pytest failing to emit
+    its report, ...) was silently treated the same as 'no test suite
+    found' — letting an unverifiable fix pass validation as if it had been
+    confirmed safe."""
+    assert _validate_with_tests_result(
+        {"framework": "jest", "error": "runner binary not found: [Errno 2] ..."},
+        tmp_path_factory,
+    ) is False
+    assert _validate_with_tests_result(
+        {"framework": "pytest", "error": "pytest did not produce a report (plugin missing?)"},
+        tmp_path_factory,
+    ) is False
+
+
+def test_validate_fails_when_tests_result_missing_entirely(tmp_path_factory):
+    assert _validate_with_tests_result(None, tmp_path_factory) is False
+
+
+def test_validate_passes_when_tests_pass(tmp_path_factory):
+    assert _validate_with_tests_result(
+        {"framework": "pytest", "total": 3, "passed": 3, "failed": 0, "errors": 0},
+        tmp_path_factory,
+    ) is True
+
+
+def test_validate_fails_when_tests_fail(tmp_path_factory):
+    assert _validate_with_tests_result(
+        {"framework": "pytest", "total": 3, "passed": 2, "failed": 1, "errors": 0},
+        tmp_path_factory,
+    ) is False

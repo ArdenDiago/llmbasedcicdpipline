@@ -28,7 +28,7 @@ NAME = "trivy"
 OFFLINE_CACHE_DIR = "/opt/trivy-cache"
 
 
-def run(target_path: str, timeout: int = 180) -> list[Finding]:
+def run(target_path: str, timeout: int = 180) -> tuple[list[Finding], list[str]]:
     cmd = [
         "trivy",
         "fs",

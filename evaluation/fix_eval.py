@@ -49,7 +49,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 _COST_PER_1M: dict[str, tuple[float, float]] = {
     "claude-haiku-4-5-20251001": (1.00, 5.00),
     "claude-sonnet-4-6":         (3.00, 15.00),
-    "claude-opus-4-8":           (15.00, 75.00),
+    "claude-opus-4-6":           (15.00, 75.00),
     "gpt-4o":                    (5.00, 15.00),
     "gpt-4o-mini":               (0.15,  0.60),
 }

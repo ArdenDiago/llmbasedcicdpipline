@@ -47,14 +47,30 @@ def default_file_reader(repo_path: Path, rel: str) -> str:
     return (repo_path / rel).read_text(encoding="utf-8", errors="replace")
 
 
-def default_pr_body(finding: dict[str, Any], fix: analyzer.FixProposal) -> str:
-    return render_prompt(
+def default_pr_body(
+    finding: dict[str, Any],
+    fix: analyzer.FixProposal,
+    haiku_client: analyzer.LLMClient,
+    max_tokens: int = 500,
+) -> str:
+    """pr_body.j2 is an LLM *prompt* ("Generate a concise pull request
+    description...", ending with a format template using literal
+    placeholders like {scanner}/{one paragraph} for the model to fill in),
+    not a Jinja2 output template — those single-brace placeholders are
+    instructions to the model, not template variables, so rendering the
+    template alone and returning it directly (a prior bug) would put a PR
+    body's worth of unfilled instructions and literal "{one paragraph}"
+    text on every real PR. Root CLAUDE.md documents PR body generation as
+    a Haiku task; this actually calls Haiku with the rendered prompt."""
+    prompt = render_prompt(
         "pr_body",
         finding=finding,
         fix_summary=fix.rationale or "See changed file.",
         confidence=f"{fix.confidence:.2f}",
         model_used=fix.model_used,
     )
+    resp = haiku_client.complete(prompt, max_tokens=max_tokens)
+    return resp.text
 
 
 def _eligible(finding: dict[str, Any], min_severity: str) -> bool:
@@ -69,7 +85,7 @@ def run(
     validate: ValidateFn,
     github_client: github_api._GithubLike | None = None,
     file_reader: FileReader = default_file_reader,
-    pr_body: PRBodyRenderer = default_pr_body,
+    pr_body: PRBodyRenderer | None = None,
     min_severity: str = DEFAULT_MIN_SEVERITY,
     base_branch: str | None = None,
 ) -> PipelineResult:
@@ -87,6 +103,19 @@ def run(
     # wrong version of the file. An explicit base_branch argument still
     # overrides this (e.g. for tests or a caller that wants main regardless).
     effective_base_branch = base_branch or dispatch.get("branch") or "main"
+
+    if pr_body is None:
+        # Bind the actual Haiku client for this run so the default renderer
+        # can make a real LLM call, without forcing every PRBodyRenderer
+        # (including test overrides, which are 2-arg) to accept a clients
+        # parameter.
+        pr_body_task = config.tasks.get("pr_body")
+        pr_body_max_tokens = pr_body_task.max_tokens_out if pr_body_task else 500
+
+        def pr_body_fn(finding: dict[str, Any], fix: analyzer.FixProposal) -> str:
+            return default_pr_body(finding, fix, clients.haiku, max_tokens=pr_body_max_tokens)
+    else:
+        pr_body_fn = pr_body
 
     findings = _extract_findings(envelope)
     result = PipelineResult(processed=0)
@@ -120,7 +149,7 @@ def run(
             )
             continue
 
-        body = pr_body(finding, fix)
+        body = pr_body_fn(finding, fix)
         req = creator.PRRequest(
             finding=finding,
             fixed_content=fix.fixed_content,

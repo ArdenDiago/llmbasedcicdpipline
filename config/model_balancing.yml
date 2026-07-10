@@ -29,7 +29,21 @@ models:
     priority: 4  # LAST RESORT ONLY
     cost: high
 
-# Task-to-model mapping
+# Task-to-model mapping.
+#
+# IMPORTANT — what these fields actually control: `primary`/`fallback`/
+# `last_resort` are an ELIGIBILITY gate, not a model router. The escalation
+# ORDER (DeepSeek -> Haiku -> Sonnet -> Opus) is hardcoded in
+# agent/llm/analyzer.py::analyze_finding() to match the fixed cascade
+# described in the root CLAUDE.md; analyzer.py only reads whether
+# `task.fallback`/`task.last_resort` is None to decide whether a given task
+# is AUTHORIZED to escalate that far at all (see the single_file_fix comment
+# below). It does not read the model NAMES here to pick which client to
+# call — renaming e.g. single_file_fix's `fallback` from `sonnet` to `haiku`
+# would not reroute anything; the hardcoded chain would still call Sonnet.
+# If per-task model routing (not just eligibility) becomes a real
+# requirement, analyzer.py needs to actually look up clients by these names
+# instead of by fixed attribute.
 tasks:
   error_classification:
     primary: deepseek_coder

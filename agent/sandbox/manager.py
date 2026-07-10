@@ -68,6 +68,21 @@ def _default_client_set(balancing_config) -> Any:
     )
 
 
+# Exact/prefix matches for agent.testing.runner.run()'s error strings that
+# mean "no test suite exists to run" — as opposed to "a test suite exists
+# but we couldn't execute it" (missing runner binary, no network for
+# `npx jest` under network_disabled=True, a timeout, a crashed runner, or
+# pytest failing to emit its JSON report). Only the former is a case where
+# validation should pass by default; the latter means we cannot confirm the
+# fix didn't break anything, so it must not be treated the same way.
+_NO_TEST_SUITE_ERRORS = ("no supported test framework detected",)
+_NO_TEST_SUITE_PREFIXES = ("unsupported framework:",)
+
+
+def _is_no_test_suite_error(error: str) -> bool:
+    return error in _NO_TEST_SUITE_ERRORS or error.startswith(_NO_TEST_SUITE_PREFIXES)
+
+
 def _default_validate_factory(
     docker_client: Any, image_ref: str, payload: dict[str, Any]
 ) -> Callable[[Path], bool]:
@@ -83,11 +98,30 @@ def _default_validate_factory(
         if result.error or result.timed_out:
             return False
         tests = (result.results or {}).get("tests") if result.results else None
-        if not tests or tests.get("error"):
-            # No discoverable test suite: testing/CLAUDE.md says to report
-            # that, not fabricate a result — don't block a fix on a repo
-            # that has nothing to validate against.
-            return True
+        if not tests:
+            # The sandbox run itself didn't produce a tests result at all
+            # (e.g. the in-container script crashed before writing
+            # results.json) — this is "we don't know," not "confirmed no
+            # tests," so don't silently pass it.
+            return False
+        err = tests.get("error")
+        if err:
+            if _is_no_test_suite_error(err):
+                # Genuinely nothing to validate against — testing/CLAUDE.md:
+                # "if no test suite found, report that, do not fabricate
+                # results." Don't block a fix on a repo with no discoverable
+                # tests.
+                return True
+            # Any other error means a test suite EXISTS but we could not
+            # execute it (missing runner binary, timeout, `npx jest` unable
+            # to reach the registry under network_disabled=True, pytest
+            # failing to emit its report, ...). Silently treating this the
+            # same as "no test suite" was the actual bug here: it let a real
+            # execution failure pass validation as if the fix had been
+            # verified safe. Fail closed instead, per "NEVER create a PR if
+            # validation tests fail" — an unverifiable fix is not the same
+            # as a verified-safe one.
+            return False
         return not tests.get("failed") and not tests.get("errors")
 
     return _validate

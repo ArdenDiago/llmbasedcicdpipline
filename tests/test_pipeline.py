@@ -177,6 +177,62 @@ def test_base_branch_defaults_to_dispatch_branch_not_main(tmp_path: Path, client
     assert captured_base_branches == ["feature/some-branch"]
 
 
+def test_default_pr_body_calls_haiku_instead_of_returning_raw_prompt(
+    tmp_path: Path, monkeypatch,
+):
+    """Regression test: pr_body.j2 is an LLM *prompt* ("Generate a concise
+    pull request description...", ending with a format template using
+    literal placeholders like {scanner}/{one paragraph} for the model to
+    fill in) — not a Jinja2 output template. A prior bug rendered the
+    template and used the raw, unfilled-placeholder prompt text directly as
+    the PR body, without ever calling an LLM, despite CLAUDE.md documenting
+    PR body generation as a Haiku task. This confirms the default path
+    actually calls Haiku and uses its response, not the raw prompt."""
+    finding = {
+        "scanner": "bandit", "rule_id": "B1", "severity": "high",
+        "file": "a.py", "cwe": "CWE-798", "message": "hardcoded credential",
+    }
+    monkeypatch.setattr(analyzer, "analyze_finding", lambda **kw: _fix())
+
+    haiku_calls = []
+
+    class FakeHaiku:
+        def complete(self, prompt, max_tokens, temperature=0.2):
+            haiku_calls.append(prompt)
+            return analyzer.LLMResponse(
+                text="## Automated Security Fix\n\nA real Haiku-written body.",
+                model="haiku", tokens_in=10, tokens_out=10, latency_ms=1,
+            )
+
+    clients_with_real_haiku = analyzer.ClientSet(
+        deepseek=MagicMock(), haiku=FakeHaiku(), sonnet=MagicMock(), opus=MagicMock(),
+    )
+
+    captured_bodies = []
+
+    def fake_create_pr(req, validate, client=None):
+        captured_bodies.append(req.pr_body)
+        return creator.PRResult(created=True, branch="b", pr=None)
+
+    monkeypatch.setattr(creator, "create_pr", fake_create_pr)
+
+    pipeline.run(
+        envelope=_envelope([finding]), repo_path=tmp_path,
+        clients=clients_with_real_haiku, config=_config(),
+        validate=lambda _: True, github_client=MagicMock(),
+        file_reader=lambda p, r: "src",
+        # pr_body intentionally omitted — exercising the default path.
+    )
+
+    assert len(haiku_calls) == 1
+    assert "pull request description" in haiku_calls[0]  # the actual prompt was sent
+    assert captured_bodies == ["## Automated Security Fix\n\nA real Haiku-written body."]
+    # The raw prompt's own instruction text / unfilled placeholders must
+    # never appear in the final body.
+    assert "Generate a concise pull request description" not in captured_bodies[0]
+    assert "{one paragraph}" not in captured_bodies[0]
+
+
 def test_explicit_base_branch_overrides_dispatch_branch(tmp_path: Path, clients, monkeypatch):
     findings = [{"scanner": "bandit", "rule_id": "B1", "severity": "high", "file": "a.py"}]
     monkeypatch.setattr(analyzer, "analyze_finding", lambda **kw: _fix())

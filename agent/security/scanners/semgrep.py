@@ -25,7 +25,7 @@ _CWE_RE = re.compile(r"CWE-\d+")
 OFFLINE_RULES_DIR = "/opt/semgrep-rules"
 
 
-def run(target_path: str, timeout: int = 180) -> list[Finding]:
+def run(target_path: str, timeout: int = 180) -> tuple[list[Finding], list[str]]:
     offline = os.path.isdir(OFFLINE_RULES_DIR)
     config = OFFLINE_RULES_DIR if offline else "auto"
     cmd = [
