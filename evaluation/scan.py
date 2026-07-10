@@ -32,7 +32,9 @@ def scan_dataset(dataset_dir: Path, timeout: int = 180) -> dict[str, Path]:
 
     for tool, runner in (("bandit", bandit), ("semgrep", semgrep)):
         try:
-            findings = runner.run(str(source), timeout=timeout)
+            findings, scan_errors = runner.run(str(source), timeout=timeout)
+            for err in scan_errors:
+                logger.warning("%s reported an error scanning %s: %s", tool, source, err)
         except FileNotFoundError as exc:
             logger.warning("%s not installed: %s", tool, exc)
             findings = []

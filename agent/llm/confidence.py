@@ -16,7 +16,7 @@ def extract_score(text: str) -> float | None:
         return None
 
     # 1. Try JSON first — cheapest and most reliable.
-    for candidate in _json_candidates(text):
+    for candidate in json_candidates(text):
         try:
             obj = json.loads(candidate)
         except json.JSONDecodeError:
@@ -56,19 +56,38 @@ def _coerce(v) -> float | None:
     return f
 
 
-def _json_candidates(text: str) -> list[str]:
-    """Yield top-level JSON object substrings."""
+def json_candidates(text: str) -> list[str]:
+    """Return top-level JSON object substrings, tracking whether we're
+    inside a double-quoted JSON string so braces embedded in string values
+    (e.g. a "reasoning" field that mentions a dict literal, or source code
+    quoted in an explanation) don't miscount nesting depth. Shared by
+    confidence.extract_score() and analyzer._parse_category() — both parse
+    a small JSON object out of an otherwise free-text LLM response."""
     out = []
     depth = 0
     start = -1
+    in_string = False
+    escape = False
     for i, ch in enumerate(text):
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+            continue
         if ch == "{":
             if depth == 0:
                 start = i
             depth += 1
         elif ch == "}":
-            depth -= 1
-            if depth == 0 and start != -1:
-                out.append(text[start : i + 1])
-                start = -1
+            if depth > 0:
+                depth -= 1
+                if depth == 0 and start != -1:
+                    out.append(text[start : i + 1])
+                    start = -1
     return out

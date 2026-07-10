@@ -84,3 +84,38 @@ def test_dedupe_keeps_distinct_cwes_at_same_line():
     b = _finding(rule_id="R2", cwe="CWE-78")
     deduped = dedupe([a, b])
     assert len(deduped) == 2
+
+
+def test_dedupe_preserves_dropped_scanners_message_as_corroboration():
+    """Regression test: dedupe used to discard the lower-severity
+    duplicate's scanner name and message entirely on conflict. A second
+    tool independently flagging the same (file, line, CWE) is useful
+    evidence for the LLM fix-generation prompt even though only one Finding
+    object can be kept."""
+    bandit_finding = _finding(
+        scanner="bandit", rule_id="B608", cwe="CWE-89", severity="medium",
+        message="possible SQL injection via string formatting",
+    )
+    semgrep_finding = _finding(
+        scanner="semgrep", rule_id="python.lang.sqli", cwe="CWE-89", severity="high",
+        message="SQL query built from f-string, injection risk",
+    )
+    deduped = dedupe([bandit_finding, semgrep_finding])
+    assert len(deduped) == 1
+    kept = deduped[0]
+    assert kept.scanner == "semgrep"
+    assert kept.extra["corroborated_by"] == [
+        {"scanner": "bandit", "rule_id": "B608", "message": "possible SQL injection via string formatting"},
+    ]
+
+
+def test_dedupe_accumulates_corroboration_across_three_scanners():
+    a = _finding(scanner="bandit", rule_id="B608", cwe="CWE-89", severity="low", message="m1")
+    b = _finding(scanner="semgrep", rule_id="S1", cwe="CWE-89", severity="medium", message="m2")
+    c = _finding(scanner="trivy", rule_id="T1", cwe="CWE-89", severity="high", message="m3")
+    deduped = dedupe([a, b, c])
+    assert len(deduped) == 1
+    kept = deduped[0]
+    assert kept.scanner == "trivy"
+    corroborators = {entry["scanner"] for entry in kept.extra["corroborated_by"]}
+    assert corroborators == {"bandit", "semgrep"}

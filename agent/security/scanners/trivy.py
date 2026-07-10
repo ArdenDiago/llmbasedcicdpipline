@@ -51,15 +51,19 @@ def run(target_path: str, timeout: int = 180) -> list[Finding]:
     proc = subprocess.run(
         cmd, capture_output=True, text=True, timeout=timeout, check=False
     )
-    return parse(proc.stdout or "{}")
+    return parse(proc.stdout or "{}", proc.returncode)
 
 
-def parse(stdout: str) -> list[Finding]:
+def parse(stdout: str, returncode: int = 0) -> tuple[list[Finding], list[str]]:
+    """Returns (findings, errors). No `--exit-code` flag is passed above, so
+    trivy exits 0 whenever the scan itself completed (regardless of findings)
+    and non-zero only on a real execution failure — surface that instead of
+    silently reporting "ok" with 0 findings."""
     try:
         data = json.loads(stdout)
     except json.JSONDecodeError:
         logger.warning("trivy output was not valid JSON")
-        return []
+        return [], [f"trivy produced non-JSON output (exit code {returncode})"]
     findings: list[Finding] = []
     for result in data.get("Results") or []:
         if not isinstance(result, dict):
@@ -68,7 +72,10 @@ def parse(stdout: str) -> list[Finding]:
         findings.extend(_vulns(result, target))
         findings.extend(_secrets(result, target))
         findings.extend(_misconfigs(result, target))
-    return findings
+    errors: list[str] = []
+    if returncode != 0:
+        errors.append(f"trivy exited with unexpected code {returncode}")
+    return findings, errors
 
 
 def _vulns(result: dict[str, Any], target: str) -> list[Finding]:

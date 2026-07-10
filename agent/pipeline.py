@@ -123,7 +123,15 @@ def run(
             commit_sha=commit_sha,
             pr_body=body,
         )
-        result.created.append(creator.create_pr(req, validate=validate, client=github_client))
+        # create_pr() does real git/GitHub I/O against a repo_path shared
+        # across every finding in this loop — one finding's git failure
+        # (e.g. a push conflict, a GitHub API error) must not abort
+        # processing of the rest of the batch.
+        try:
+            result.created.append(creator.create_pr(req, validate=validate, client=github_client))
+        except Exception as exc:
+            logger.warning("skip finding: create_pr failed: %s", exc)
+            result.skipped.append({"finding": finding, "reason": f"create_pr error: {exc}"})
 
     return result
 

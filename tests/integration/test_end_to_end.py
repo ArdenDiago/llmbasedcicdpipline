@@ -32,6 +32,16 @@ def _config() -> BalancingConfig:
                 fallback="sonnet", last_resort=None,
                 max_tokens_in=3000, max_tokens_out=1000,
             ),
+            "error_classification": TaskConfig(
+                name="error_classification", primary="deepseek_coder",
+                fallback="haiku", last_resort=None,
+                max_tokens_in=500, max_tokens_out=100,
+            ),
+            "confidence_eval": TaskConfig(
+                name="confidence_eval", primary="haiku",
+                fallback=None, last_resort=None,
+                max_tokens_in=2000, max_tokens_out=150,
+            ),
         },
         escalation=EscalationConfig(
             confidence_threshold=0.5, max_attempts=3, opus_min_attempt=3,
@@ -52,9 +62,33 @@ class _FakeLLM:
         )
 
 
+class _FakeHaiku:
+    """Haiku is called for two different templates (classify_error.j2 and
+    confidence_eval.j2) — route by a substring unique to each so a high
+    confidence_eval score can stop escalation at attempt 1, matching what a
+    real independent evaluator would do."""
+
+    def __init__(self, classify_text: str, eval_text: str):
+        self._classify_text = classify_text
+        self._eval_text = eval_text
+
+    def complete(self, prompt, max_tokens, temperature=0.2):
+        if "evaluating the quality" in prompt:
+            text = self._eval_text
+        elif "code error classifier" in prompt:
+            text = self._classify_text
+        else:
+            raise AssertionError(f"unrecognized Haiku prompt: {prompt[:80]!r}")
+        return LLMResponse(
+            text=text, model="haiku",
+            tokens_in=len(prompt) // 4, tokens_out=len(text) // 4,
+            latency_ms=42,
+        )
+
+
 def _build_envelope() -> dict:
-    bandit_findings = bandit.parse((FIXTURES / "bandit.json").read_text())
-    semgrep_findings = semgrep.parse((FIXTURES / "semgrep.json").read_text())
+    bandit_findings, _ = bandit.parse((FIXTURES / "bandit.json").read_text())
+    semgrep_findings, _ = semgrep.parse((FIXTURES / "semgrep.json").read_text())
     merged = normalize.dedupe(bandit_findings + semgrep_findings)
     return {
         "dispatch": {
@@ -76,6 +110,7 @@ def test_full_pipeline_creates_one_pr_per_high_severity_finding(tmp_path: Path, 
 
     # Stub git + GitHub so we don't hit disk or the network, but keep branch
     # naming, PR body rendering, and severity filtering real.
+    monkeypatch.setattr(creator.committer, "reset_to_base", lambda *a, **k: None)
     monkeypatch.setattr(creator.committer, "create_branch", lambda *a, **k: None)
     monkeypatch.setattr(creator.committer, "apply_patch", lambda *a, **k: None)
     monkeypatch.setattr(creator.committer, "commit_all", lambda *a, **k: "sha123")
@@ -92,14 +127,13 @@ def test_full_pipeline_creates_one_pr_per_high_severity_finding(tmp_path: Path, 
 
     monkeypatch.setattr(creator.github_api, "create_pull_request", fake_create_pr)
 
-    fix_text = (
-        '{"confidence": 0.82}\n'
-        "diff --git a/x b/x\n"
-        "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-bad\n+good\n"
-    )
+    fix_text = "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-bad\n+good\n"
     clients = analyzer.ClientSet(
         deepseek=_FakeLLM("deepseek-coder:6.7b", fix_text),
-        haiku=_FakeLLM("haiku", '{"category": "simple"}'),
+        haiku=_FakeHaiku(
+            classify_text='{"category": "simple"}',
+            eval_text='{"confidence": 0.82, "reasoning": "looks correct"}',
+        ),
         sonnet=_FakeLLM("sonnet", fix_text),
         opus=_FakeLLM("opus", fix_text),
     )
@@ -136,6 +170,7 @@ def test_full_pipeline_creates_one_pr_per_high_severity_finding(tmp_path: Path, 
 def test_full_pipeline_respects_failing_validation(tmp_path: Path, monkeypatch):
     envelope = _build_envelope()
 
+    monkeypatch.setattr(creator.committer, "reset_to_base", lambda *a, **k: None)
     monkeypatch.setattr(creator.committer, "create_branch", lambda *a, **k: None)
     monkeypatch.setattr(creator.committer, "apply_patch", lambda *a, **k: None)
     committed = []
@@ -156,9 +191,12 @@ def test_full_pipeline_respects_failing_validation(tmp_path: Path, monkeypatch):
 
     clients = analyzer.ClientSet(
         deepseek=_FakeLLM(
-            "deepseek", '{"confidence": 0.9}\ndiff --git a/x b/x\n--- a/x\n+++ b/x\n@@\n-x\n+y\n',
+            "deepseek", "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@\n-x\n+y\n",
         ),
-        haiku=_FakeLLM("haiku", '{"category": "simple"}'),
+        haiku=_FakeHaiku(
+            classify_text='{"category": "simple"}',
+            eval_text='{"confidence": 0.9, "reasoning": "looks correct"}',
+        ),
         sonnet=MagicMock(), opus=MagicMock(),
     )
 

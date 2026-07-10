@@ -50,32 +50,51 @@ def run_all(
     errors: list[dict[str, Any]] = []
     scanner_status: dict[str, str] = {n: "pending" for n in names}
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=len(names) or 1) as pool:
-        futures = {
-            pool.submit(_safe_run, name, target_path, per_scanner_timeout): name
-            for name in names
-        }
+    # Deliberately not a `with ThreadPoolExecutor() as pool:` block: the
+    # context manager's __exit__ always calls shutdown(wait=True), which
+    # blocks until every submitted thread finishes regardless of any timeout
+    # handled inside the block — silently defeating total_timeout entirely
+    # (the function would take as long as the slowest scanner no matter what).
+    # concurrent.futures.wait(..., timeout=...) below returns (done, not_done)
+    # sets atomically at the deadline without raising, so results that
+    # completed before the deadline are never skipped/discarded the way an
+    # as_completed()-plus-TimeoutError loop can (that loop aborts entirely on
+    # the exception, dropping any already-finished-but-not-yet-processed
+    # future). shutdown(wait=False, cancel_futures=True) then lets run_all()
+    # return promptly at total_timeout instead of blocking further.
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=len(names) or 1)
+    futures = {
+        pool.submit(_safe_run, name, target_path, per_scanner_timeout): name
+        for name in names
+    }
+    done, not_done = concurrent.futures.wait(futures, timeout=total_timeout)
+
+    for fut in done:
+        name = futures[fut]
         try:
-            for fut in concurrent.futures.as_completed(futures, timeout=total_timeout):
-                name = futures[fut]
-                try:
-                    scanner_findings, err = fut.result()
-                except Exception as exc:  # defensive — _safe_run catches
-                    scanner_status[name] = "error"
-                    errors.append({"scanner": name, "error": f"{type(exc).__name__}: {exc}"})
-                    continue
-                if err is not None:
-                    scanner_status[name] = "error"
-                    errors.append({"scanner": name, "error": err})
-                else:
-                    scanner_status[name] = "ok"
-                findings.extend(scanner_findings)
-        except concurrent.futures.TimeoutError:
-            for fut, name in futures.items():
-                if not fut.done():
-                    scanner_status[name] = "timeout"
-                    errors.append({"scanner": name, "error": "total timeout exceeded"})
-                    fut.cancel()
+            scanner_findings, scan_errors = fut.result()
+        except Exception as exc:  # defensive — _safe_run catches
+            scanner_status[name] = "error"
+            errors.append({"scanner": name, "error": f"{type(exc).__name__}: {exc}"})
+            continue
+        if scan_errors:
+            # Still keep whatever findings *did* come back — a per-file
+            # parse error doesn't mean every other file's results are
+            # invalid, and discarding them would recreate the same "silent
+            # 0 findings" problem this is fixing.
+            scanner_status[name] = "error"
+            errors.extend({"scanner": name, "error": e} for e in scan_errors)
+        else:
+            scanner_status[name] = "ok"
+        findings.extend(scanner_findings)
+
+    for fut in not_done:
+        name = futures[fut]
+        scanner_status[name] = "timeout"
+        errors.append({"scanner": name, "error": "total timeout exceeded"})
+        fut.cancel()
+
+    pool.shutdown(wait=False, cancel_futures=True)
 
     deduped = normalize.dedupe(findings)
     return {
@@ -91,17 +110,17 @@ def run_all(
     }
 
 
-def _safe_run(name: str, target_path: str, timeout: int) -> tuple[list[normalize.Finding], str | None]:
+def _safe_run(name: str, target_path: str, timeout: int) -> tuple[list[normalize.Finding], list[str]]:
     module = SCANNERS[name]
     try:
-        return module.run(target_path, timeout=timeout), None
+        return module.run(target_path, timeout=timeout)
     except FileNotFoundError as exc:
-        return [], f"{name} binary not found: {exc}"
+        return [], [f"{name} binary not found: {exc}"]
     except subprocess.TimeoutExpired:
-        return [], f"{name} timed out after {timeout}s"
+        return [], [f"{name} timed out after {timeout}s"]
     except Exception as exc:
         logger.exception("scanner %s failed", name)
-        return [], f"{type(exc).__name__}: {exc}"
+        return [], [f"{type(exc).__name__}: {exc}"]
 
 
 def _build_parser() -> argparse.ArgumentParser:

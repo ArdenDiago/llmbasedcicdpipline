@@ -40,8 +40,24 @@ tasks:
   single_file_fix:
     primary: deepseek_coder
     fallback: sonnet
+    last_resort: opus  # matches root CLAUDE.md's escalation flow — Opus is
+                        # reachable as absolute last resort (3rd attempt
+                        # only, gated by escalation.opus_min_attempt below),
+                        # not just for the (currently unimplemented)
+                        # multi_file_fix task.
     max_tokens_in: 3000
     max_tokens_out: 1000
+
+  # Scores a candidate fix's confidence via confidence_eval.j2. Always run by
+  # Haiku (see root CLAUDE.md's "confidence scoring" line under Haiku),
+  # independent of which model generated the fix being scored — a fix
+  # generator grading its own homework is not a meaningful confidence signal,
+  # and fix_single_file.j2's "no explanation" instruction means the
+  # generating model never emits a usable score inline anyway.
+  confidence_eval:
+    primary: haiku
+    max_tokens_in: 2000
+    max_tokens_out: 150
 
   multi_file_fix:
     primary: deepseek_coder

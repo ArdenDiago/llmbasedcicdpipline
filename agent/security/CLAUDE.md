@@ -47,6 +47,11 @@ JSON output for the LLM layer to analyze.
 - scanners/gitleaks.py → Gitleaks runner and parser
 - scanners/bandit.py  → Bandit runner and parser
 - scanners/semgrep.py → Semgrep runner and parser
+- scanners/codeql.py  → CodeQL runner and parser — **evaluation-only**, not
+                        wired into run_scan.py's SCANNERS dict or the live
+                        sandbox pipeline. Used solely by evaluation/ to
+                        benchmark detection quality against the deployed
+                        four-scanner set; see the module's own docstring.
 - normalize.py        → Unified format conversion and dedup
 
 ## Rules

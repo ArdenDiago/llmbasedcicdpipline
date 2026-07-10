@@ -77,6 +77,12 @@ def create_pr(
         commit_sha=req.commit_sha,
     )
 
+    # Every finding shares req.repo_path with every other finding in the
+    # same pipeline run (see pipeline.run()'s loop) — always start from a
+    # clean base branch so a previous finding's failed validation (patch
+    # applied, never committed) or a raised CommitError can't leak into
+    # this finding's branch/PR.
+    committer.reset_to_base(req.repo_path, req.base_branch)
     committer.create_branch(req.repo_path, branch, base=req.base_branch)
     committer.apply_patch(req.repo_path, req.diff)
 

@@ -86,8 +86,8 @@ def test_run_all_dedupes_across_scanners(tmp_path):
         confidence="high", file="x.py", line=1, message="hi",
     )
 
-    with patch.object(run_scan.bandit, "run", return_value=[bandit_finding]), \
-         patch.object(run_scan.semgrep, "run", return_value=[semgrep_finding]):
+    with patch.object(run_scan.bandit, "run", return_value=([bandit_finding], [])), \
+         patch.object(run_scan.semgrep, "run", return_value=([semgrep_finding], [])):
         result = run_scan.run_all(
             str(tmp_path), enabled=["bandit", "semgrep"], per_scanner_timeout=5, total_timeout=10
         )
@@ -97,6 +97,78 @@ def test_run_all_dedupes_across_scanners(tmp_path):
     kept = result["findings"][0]
     assert kept["severity"] == "high"
     assert kept["scanner"] == "semgrep"
+
+
+def test_run_all_marks_scanner_error_but_keeps_partial_findings(tmp_path):
+    """Regression test: a scanner that failed to parse one file (bandit's own
+    top-level `errors` array) must not look identical to a clean scan — but
+    findings it *did* produce for other files must not be silently dropped
+    either."""
+    bandit_json = json.dumps({
+        "errors": [{"filename": "broken.py", "reason": "syntax error while parsing AST"}],
+        "results": [
+            {
+                "filename": "app/auth.py",
+                "issue_severity": "LOW",
+                "issue_confidence": "MEDIUM",
+                "issue_text": "hardcoded password",
+                "test_id": "B105",
+                "line_number": 45,
+            }
+        ],
+    })
+
+    def fake_run(cmd, **kwargs):
+        return _fake_proc(bandit_json, returncode=1)
+
+    with patch("subprocess.run", side_effect=fake_run):
+        result = run_scan.run_all(
+            str(tmp_path), enabled=["bandit"], per_scanner_timeout=5, total_timeout=10
+        )
+
+    assert result["scanners"]["bandit"] == "error"
+    assert any("broken.py" in e["error"] for e in result["errors"])
+    assert result["stats"]["total_findings"] == 1
+    assert result["findings"][0]["rule_id"] == "B105"
+
+
+def test_run_all_total_timeout_bounds_wall_clock_and_keeps_completed_results(tmp_path):
+    """Regression test: a `with ThreadPoolExecutor() as pool:` block's
+    __exit__ always calls shutdown(wait=True), which blocks until every
+    submitted thread finishes regardless of any total_timeout handled inside
+    the block — the old code took as long as the slowest scanner no matter
+    what total_timeout said, and (separately) discarded results from
+    scanners that finished after the timeout fired but before the executor
+    actually returned. This asserts both are fixed: run_all() itself returns
+    close to total_timeout, and the scanner that finished in time keeps its
+    finding."""
+    import time
+
+    def fake_run(cmd, **kwargs):
+        if cmd[0] == "trivy":
+            time.sleep(2)  # far longer than total_timeout below
+            return _fake_proc("{}")
+        return _fake_proc(
+            json.dumps({"errors": [], "results": [
+                {"filename": "app/auth.py", "issue_severity": "LOW",
+                 "issue_confidence": "MEDIUM", "issue_text": "hardcoded password",
+                 "test_id": "B105", "line_number": 45},
+            ]}),
+            returncode=1,
+        )
+
+    with patch("subprocess.run", side_effect=fake_run):
+        started = time.monotonic()
+        result = run_scan.run_all(
+            str(tmp_path), enabled=["bandit", "trivy"],
+            per_scanner_timeout=5, total_timeout=0.3,
+        )
+        elapsed = time.monotonic() - started
+
+    assert elapsed < 1.5, f"run_all() blocked for {elapsed:.2f}s despite total_timeout=0.3s"
+    assert result["scanners"]["trivy"] == "timeout"
+    assert result["scanners"]["bandit"] == "ok"
+    assert result["findings"][0]["rule_id"] == "B105"
 
 
 def test_cli_emits_json(tmp_path, capsys):

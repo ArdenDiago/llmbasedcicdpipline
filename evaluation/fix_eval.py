@@ -187,7 +187,9 @@ def rescan_file(workdir: Path, target_relpath: str, cwe: str, line_tol: int = 10
     findings: list[dict] = []
     for runner in (bandit_scanner, semgrep_scanner):
         try:
-            res = runner.run(str(workdir), timeout=120)
+            res, scan_errors = runner.run(str(workdir), timeout=120)
+            for err in scan_errors:
+                logger.warning("rescan %s reported an error: %s", runner.NAME, err)
             findings.extend(f.to_dict() for f in res)
         except Exception as exc:
             logger.warning("rescan %s failed: %s", runner.NAME, exc)

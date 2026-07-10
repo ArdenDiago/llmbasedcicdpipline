@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 NAME = "gitleaks"
 
 
-def run(target_path: str, timeout: int = 180) -> list[Finding]:
+def run(target_path: str, timeout: int = 180) -> tuple[list[Finding], list[str]]:
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
         report_path = tmp.name
     cmd = [
@@ -36,14 +36,24 @@ def run(target_path: str, timeout: int = 180) -> list[Finding]:
         "0",
     ]
     logger.debug("gitleaks: %s", " ".join(cmd))
-    subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
+    errors: list[str] = []
     try:
-        raw = Path(report_path).read_text(encoding="utf-8")
-    except FileNotFoundError:
-        raw = ""
+        # The subprocess call itself must be inside this try/finally, not
+        # just the report read below it — otherwise a missing binary or a
+        # timeout leaves the NamedTemporaryFile (already created above)
+        # stranded on disk on every such error path.
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
+        try:
+            raw = Path(report_path).read_text(encoding="utf-8")
+        except FileNotFoundError:
+            raw = ""
     finally:
         Path(report_path).unlink(missing_ok=True)
-    return parse(raw)
+    # --exit-code 0 forces success even when leaks are found, so any
+    # non-zero code here is a real invocation failure, not "leaks found".
+    if proc.returncode != 0:
+        errors.append(f"gitleaks exited with unexpected code {proc.returncode}: {proc.stderr.strip()}")
+    return parse(raw), errors
 
 
 def parse(stdout: str) -> list[Finding]:

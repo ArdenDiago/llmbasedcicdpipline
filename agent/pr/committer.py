@@ -19,6 +19,18 @@ class CommitError(RuntimeError):
     pass
 
 
+class BranchAlreadyExistsError(CommitError):
+    """Raised by push() when the remote already has this branch.
+
+    Branch names are deterministic (brancher.branch_name() hashes
+    file+line+commit_sha), so re-processing the same commit (webhook retry,
+    manager restart) reproduces the identical branch name and a plain
+    `git push` fails non-fast-forward. Callers can catch this specifically
+    to treat it as "a PR for this finding likely already exists, skip" —
+    the base CommitError is still raised so anything only catching that
+    keeps working unchanged."""
+
+
 @dataclass
 class CommitResult:
     branch: str
@@ -40,6 +52,18 @@ def _run(cmd: list[str], cwd: Path) -> str:
             f"git {' '.join(cmd[1:])} failed ({proc.returncode}): {proc.stderr.strip()}"
         )
     return proc.stdout.strip()
+
+
+def reset_to_base(repo_path: Path, base_branch: str) -> None:
+    """Discard any uncommitted changes/stray branch checkout left behind by
+    a prior finding's create_pr() call (e.g. one whose patch applied but
+    failed validation) so every finding starts from a clean, known state.
+    Without this, a dirty tree from finding N can either abort finding N+1's
+    `git checkout -b` outright or silently carry finding N's changes onto
+    finding N+1's branch/PR."""
+    _run(["git", "checkout", "--force", base_branch], repo_path)
+    _run(["git", "reset", "--hard"], repo_path)
+    _run(["git", "clean", "-fd"], repo_path)
 
 
 def create_branch(repo_path: Path, branch: str, base: str = "HEAD") -> None:
@@ -69,10 +93,18 @@ def commit_all(repo_path: Path, message: str) -> str:
     return _run(["git", "rev-parse", "HEAD"], repo_path)
 
 
+_NON_FAST_FORWARD_MARKERS = ("non-fast-forward", "fetch first", "already exists")
+
+
 def push(repo_path: Path, branch: str, remote: str = "origin") -> None:
     if branch in PROTECTED_BRANCHES:
         raise CommitError(f"refusing to push to protected branch: {branch}")
-    _run(["git", "push", "-u", remote, branch], repo_path)
+    try:
+        _run(["git", "push", "-u", remote, branch], repo_path)
+    except CommitError as exc:
+        if any(marker in str(exc).lower() for marker in _NON_FAST_FORWARD_MARKERS):
+            raise BranchAlreadyExistsError(str(exc)) from exc
+        raise
 
 
 def commit_message(finding: dict, confidence: float, model_used: str) -> str:

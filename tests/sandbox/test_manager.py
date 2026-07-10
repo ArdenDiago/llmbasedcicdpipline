@@ -4,6 +4,8 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from agent.pipeline import PipelineResult
+from agent.pr import creator, github_api
 from agent.sandbox.manager import create_app
 
 from .conftest import FakeContainer, FakeDockerClient
@@ -38,13 +40,17 @@ def _fake_clone(tmp_path_factory):
 
 def _client_with_fake_docker(
     container: FakeContainer | None = None, clone_repo_fn=None, tmp_path_factory=None,
+    **create_app_kwargs,
 ):
     fake_docker = FakeDockerClient(container=container or FakeContainer(
         exit_code=0,
         results_payload={"stage": "sandbox_stub", "tests": None, "scanners": None},
     ))
     fake_clone = clone_repo_fn or _fake_clone(tmp_path_factory)
-    app = create_app(docker_client_factory=lambda: fake_docker, clone_repo_fn=fake_clone)
+    app = create_app(
+        docker_client_factory=lambda: fake_docker, clone_repo_fn=fake_clone,
+        **create_app_kwargs,
+    )
     return TestClient(app), fake_docker, fake_clone
 
 
@@ -134,3 +140,133 @@ def test_dispatch_returns_503_when_docker_unavailable():
 
     assert res.status_code == 503
     assert "docker" in res.json()["detail"].lower()
+
+
+_FINDING = {
+    "scanner": "bandit", "rule_id": "B105", "severity": "high",
+    "file": "app/auth.py", "line": 45, "message": "hardcoded password",
+}
+
+
+def _container_with_findings() -> FakeContainer:
+    return FakeContainer(
+        exit_code=1,
+        results_payload={
+            "tests": {"framework": "pytest", "total": 1, "passed": 1, "failed": 0, "errors": 0},
+            "scanners": {"target": "/workspace", "findings": [_FINDING], "errors": []},
+        },
+    )
+
+
+def test_dispatch_runs_fix_pipeline_when_findings_present(tmp_path_factory):
+    """Regression test for the CRITICAL finding that the sandbox result was
+    always discarded — nothing in the live dispatch path ever called
+    agent.pipeline.run(). This proves /dispatch now wires the scan envelope
+    through to the fix pipeline and surfaces its outcome in the response."""
+    calls = {}
+
+    def fake_pipeline_run(**kwargs):
+        calls["envelope"] = kwargs["envelope"]
+        calls["repo_path"] = kwargs["repo_path"]
+        pr = github_api.PullRequestRef(number=1, html_url="https://x/pr/1", head="fix/x", base="main")
+        return PipelineResult(
+            processed=1,
+            created=[creator.PRResult(created=True, branch="fix/x", pr=pr)],
+            skipped=[],
+        )
+
+    client, fake_docker, fake_clone = _client_with_fake_docker(
+        container=_container_with_findings(),
+        tmp_path_factory=tmp_path_factory,
+        pipeline_run_fn=fake_pipeline_run,
+        client_set_factory=lambda cfg: object(),
+        validate_factory=lambda *a, **k: (lambda p: True),
+        github_client_factory=lambda: object(),
+        balancing_config_fn=lambda: object(),
+    )
+
+    res = client.post("/dispatch", json=VALID_DISPATCH)
+
+    assert res.status_code == 200
+    envelope = res.json()
+    assert envelope["scanners"]["findings"] == [_FINDING]
+    assert envelope["pipeline"] == {
+        "processed": 1, "created": 1, "skipped": 0,
+        "pull_requests": ["https://x/pr/1"],
+    }
+    # The envelope handed to pipeline.run() is exactly what a caller
+    # downstream of collector.collect() would expect (dispatch + scanners).
+    assert calls["envelope"]["dispatch"]["repo_full_name"] == "octocat/Hello-World"
+    assert calls["repo_path"] == fake_clone.created_dirs[0]
+
+
+def test_dispatch_skips_pipeline_when_no_findings(tmp_path_factory):
+    client, _, _ = _client_with_fake_docker(tmp_path_factory=tmp_path_factory)
+
+    res = client.post("/dispatch", json=VALID_DISPATCH)
+
+    assert res.status_code == 200
+    assert "pipeline" not in res.json()
+
+
+def test_dispatch_records_skip_reason_when_github_token_missing(tmp_path_factory):
+    def missing_token():
+        raise RuntimeError("GITHUB_TOKEN is required to create pull requests")
+
+    client, _, _ = _client_with_fake_docker(
+        container=_container_with_findings(),
+        tmp_path_factory=tmp_path_factory,
+        github_client_factory=missing_token,
+    )
+
+    res = client.post("/dispatch", json=VALID_DISPATCH)
+
+    assert res.status_code == 200
+    envelope = res.json()
+    assert "GITHUB_TOKEN" in envelope["pipeline"]["skipped"]
+
+
+def test_dispatch_records_error_without_failing_whole_response_when_pipeline_raises(
+    tmp_path_factory,
+):
+    """A fix-pipeline failure (bad patch, git error, LLM API error) must not
+    take down the scan/test results, which are independently valid."""
+    def boom(**kwargs):
+        raise RuntimeError("ollama unreachable")
+
+    client, _, _ = _client_with_fake_docker(
+        container=_container_with_findings(),
+        tmp_path_factory=tmp_path_factory,
+        pipeline_run_fn=boom,
+        client_set_factory=lambda cfg: object(),
+        validate_factory=lambda *a, **k: (lambda p: True),
+        github_client_factory=lambda: object(),
+        balancing_config_fn=lambda: object(),
+    )
+
+    res = client.post("/dispatch", json=VALID_DISPATCH)
+
+    assert res.status_code == 200
+    envelope = res.json()
+    assert envelope["sandbox"]["exit_code"] == 1  # scan/test results still intact
+    assert "ollama unreachable" in envelope["pipeline"]["error"]
+
+
+def test_dispatch_skips_pipeline_without_repo_url(tmp_path_factory):
+    """No repo_url means no writable clone to patch — the fix pipeline needs
+    real disk to apply patches to, so it must be skipped, not attempted
+    against a directory that was never created."""
+    dispatch = {**VALID_DISPATCH, "repo_url": None}
+    calls = []
+
+    client, _, _ = _client_with_fake_docker(
+        container=_container_with_findings(),
+        tmp_path_factory=tmp_path_factory,
+        pipeline_run_fn=lambda **kw: calls.append(1),
+    )
+
+    res = client.post("/dispatch", json=dispatch)
+
+    assert res.status_code == 200
+    assert "pipeline" not in res.json()
+    assert calls == []

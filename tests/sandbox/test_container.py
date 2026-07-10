@@ -65,8 +65,30 @@ def test_run_sandbox_timeout_flags_and_kills():
     result = container.run_sandbox(client, PAYLOAD, image="python:3.12-slim")
 
     assert result.timed_out is True
+    assert "timed out" in result.wait_error.lower()
     assert fake.killed is True
     assert fake.removed is True
+
+
+def test_run_sandbox_non_timeout_wait_failure_is_not_mislabeled_as_timeout():
+    """Regression test: container.wait() raising for a reason unrelated to
+    the timeout deadline (e.g. a docker daemon/connection error) must not be
+    reported as timed_out=True — that used to make a transient docker API
+    hiccup indistinguishable from a real 10-minute timeout. The real error
+    is still preserved in wait_error either way."""
+    fake = FakeContainer(results_payload={})
+
+    def boom(timeout=None):
+        raise ConnectionError("docker daemon connection reset")
+
+    fake.wait = boom
+    client = FakeDockerClient(container=fake)
+
+    result = container.run_sandbox(client, PAYLOAD, image="python:3.12-slim")
+
+    assert result.timed_out is False
+    assert "connection reset" in result.wait_error.lower()
+    assert fake.killed is True  # still killed defensively either way
 
 
 def test_run_sandbox_cleans_up_on_exception():

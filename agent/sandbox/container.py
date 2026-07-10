@@ -66,6 +66,7 @@ class SandboxResult:
     timed_out: bool = False
     error: str | None = None
     logs_path: str | None = field(default=None, repr=False)
+    wait_error: str | None = None  # set whenever container.wait() raised, timeout or not
 
 
 def _runner_command(payload: dict[str, Any], repo_mounted: bool) -> list[str]:
@@ -150,13 +151,24 @@ def run_sandbox(
         container.start()
 
         timed_out = False
+        wait_error: str | None = None
         exit_code = -1
         try:
             wait_result = container.wait(timeout=timeout_seconds)
             exit_code = wait_result.get("StatusCode", -1)
         except Exception as wait_exc:
-            logger.warning("sandbox wait failed/timed out: %s", wait_exc)
-            timed_out = True
+            wait_error = f"{type(wait_exc).__name__}: {wait_exc}"
+            # docker-py doesn't raise a single dedicated exception type for
+            # "the timeout_seconds deadline was hit" vs. a transient docker
+            # daemon/connection error — both surface as some Exception from
+            # this call. Only *report* it as a real timeout when the
+            # exception itself says so; otherwise keep timed_out=False and
+            # preserve the real error in wait_error so callers (e.g.
+            # collector.py) don't conflate "the container legitimately ran
+            # out of time" with "docker's API hiccuped."
+            logger.warning("sandbox container.wait() failed: %s", wait_error)
+            if "timeout" in type(wait_exc).__name__.lower() or "timeout" in str(wait_exc).lower():
+                timed_out = True
             try:
                 container.kill()
             except Exception:
@@ -174,6 +186,7 @@ def run_sandbox(
             stderr=stderr,
             results=results,
             timed_out=timed_out,
+            wait_error=wait_error,
             logs_path=str(results_host_dir),
         )
     except Exception as exc:

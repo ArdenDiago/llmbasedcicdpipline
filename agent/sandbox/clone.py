@@ -27,7 +27,9 @@ def clone_repo(repo_url: str, commit_sha: str, timeout: int = DEFAULT_CLONE_TIME
     """Clone repo_url into a fresh temp dir and check out commit_sha.
 
     Uses argument-list subprocess calls throughout (never shell=True) so a
-    hostile repo_url/commit_sha cannot inject shell commands. Raises
+    hostile repo_url/commit_sha cannot inject shell commands, and a `--`
+    separator before every positional argument so a value starting with `-`
+    (e.g. `--upload-pack=...`) can't be parsed as a git option either. Raises
     CloneError on any git failure; the caller owns cleanup of the returned
     directory (see manager.py, which removes it after the sandbox run).
     """
@@ -40,8 +42,8 @@ def clone_repo(repo_url: str, commit_sha: str, timeout: int = DEFAULT_CLONE_TIME
     # tree rather than erroring, which is worse: it looks like a clean scan).
     dest.chmod(0o755)
     try:
-        _run(["git", "clone", "--quiet", repo_url, str(dest)], timeout)
-        _run(["git", "-C", str(dest), "checkout", "--quiet", commit_sha], timeout)
+        _run(["git", "clone", "--quiet", "--", repo_url, str(dest)], timeout)
+        _run(["git", "-C", str(dest), "checkout", "--quiet", "--", commit_sha], timeout)
     except CloneError:
         shutil.rmtree(dest, ignore_errors=True)
         raise

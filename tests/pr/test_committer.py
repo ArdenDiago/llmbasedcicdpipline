@@ -33,6 +33,49 @@ def test_push_rejects_master(repo: Path):
         committer.push(repo, "master")
 
 
+def test_push_raises_branch_already_exists_on_non_fast_forward(tmp_path: Path):
+    """Regression test: branch names are deterministic (brancher.branch_name
+    hashes file+line+commit_sha), so re-processing the same commit (webhook
+    retry, manager restart) reproduces the identical branch name. Pushing a
+    diverged version of that branch a second time must raise a distinct,
+    catchable error rather than an indistinguishable-from-anything-else
+    CommitError, so callers can treat it as "a PR for this finding likely
+    already exists" instead of a hard failure."""
+    import subprocess
+
+    remote_dir = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(remote_dir)], check=True)
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    for args in (
+        ["init", "-q", "-b", "main"],
+        ["config", "user.email", "t@t"],
+        ["config", "user.name", "t"],
+    ):
+        subprocess.run(["git", *args], cwd=repo, check=True)
+    (repo / "a.txt").write_text("hello\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
+    subprocess.run(["git", "remote", "add", "origin", str(remote_dir)], cwd=repo, check=True)
+
+    committer.create_branch(repo, "fix/dup")
+    (repo / "a.txt").write_text("first push\n")
+    committer.commit_all(repo, "first")
+    committer.push(repo, "fix/dup")  # succeeds — branch now exists on the remote
+
+    # Simulate a second, independent run reprocessing the same commit_sha
+    # from a fresh checkout: same deterministic branch name, diverged content.
+    subprocess.run(["git", "checkout", "main"], cwd=repo, check=True)
+    subprocess.run(["git", "branch", "-D", "fix/dup"], cwd=repo, check=True)
+    subprocess.run(["git", "checkout", "-b", "fix/dup"], cwd=repo, check=True)
+    (repo / "a.txt").write_text("second push, diverged\n")
+    committer.commit_all(repo, "second")
+
+    with pytest.raises(committer.BranchAlreadyExistsError):
+        committer.push(repo, "fix/dup")
+
+
 def test_apply_patch_rejects_empty(repo: Path):
     with pytest.raises(committer.CommitError):
         committer.apply_patch(repo, "   \n")

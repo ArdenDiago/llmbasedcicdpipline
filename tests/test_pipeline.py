@@ -142,6 +142,44 @@ def test_happy_path_creates_one_pr_per_finding(tmp_path: Path, clients, monkeypa
     assert res.summary() == {"processed": 2, "created": 2, "skipped": 0}
 
 
+def test_create_pr_failure_does_not_abort_rest_of_batch(tmp_path: Path, clients, monkeypatch):
+    """Regression test: create_pr() does real git/GitHub I/O against a
+    repo_path shared across every finding in this loop. Before the fix, an
+    uncaught CommitError (e.g. a push conflict) from finding #1 would
+    propagate out of pipeline.run() entirely, silently dropping every
+    remaining finding in the batch instead of just skipping the one that
+    failed."""
+    findings = [
+        {"scanner": "bandit", "rule_id": "B1", "severity": "high", "file": "a.py"},
+        {"scanner": "semgrep", "rule_id": "S1", "severity": "critical", "file": "b.py"},
+    ]
+    monkeypatch.setattr(analyzer, "analyze_finding", lambda **kw: _fix())
+
+    calls = []
+
+    def flaky_create_pr(req, validate, client=None):
+        calls.append(req.finding["rule_id"])
+        if req.finding["rule_id"] == "B1":
+            raise creator.committer.CommitError("git push -u origin fix/x failed (128): non-fast-forward")
+        return creator.PRResult(
+            created=True, branch="b", pr=github_api.PullRequestRef(len(calls), "u", "b", "main"),
+        )
+
+    monkeypatch.setattr(creator, "create_pr", flaky_create_pr)
+
+    res = pipeline.run(
+        envelope=_envelope(findings), repo_path=tmp_path,
+        clients=clients, config=_config(),
+        validate=lambda _: True, github_client=MagicMock(),
+        file_reader=lambda p, r: "src", pr_body=lambda f, fix: "body",
+    )
+
+    assert calls == ["B1", "S1"]  # both attempted despite B1's failure
+    assert res.processed == 2
+    assert res.summary()["created"] == 1  # only S1 succeeded
+    assert any(s["reason"].startswith("create_pr error") for s in res.skipped)
+
+
 def test_requires_repo_full_name(tmp_path: Path, clients):
     with pytest.raises(ValueError):
         pipeline.run(

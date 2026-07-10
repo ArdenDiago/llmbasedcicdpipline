@@ -26,6 +26,7 @@ def collect(payload: dict[str, Any], result: SandboxResult) -> dict[str, Any]:
             "exit_code": result.exit_code,
             "timed_out": result.timed_out,
             "error": result.error,
+            "wait_error": result.wait_error,
         },
         "tests": (result.results or {}).get("tests") if result.results else None,
         "scanners": (result.results or {}).get("scanners") if result.results else None,

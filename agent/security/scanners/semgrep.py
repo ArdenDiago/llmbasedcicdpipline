@@ -47,17 +47,36 @@ def run(target_path: str, timeout: int = 180) -> list[Finding]:
     proc = subprocess.run(
         cmd, capture_output=True, text=True, timeout=timeout, check=False, env=env
     )
-    return parse(proc.stdout or "{}")
+    return parse(proc.stdout or "{}", proc.returncode)
 
 
-def parse(stdout: str) -> list[Finding]:
+def parse(stdout: str, returncode: int = 0) -> tuple[list[Finding], list[str]]:
+    """Returns (findings, errors). `errors` surfaces semgrep's own top-level
+    error array (e.g. a rule that crashed on a specific file) plus any
+    unexpected exit code, so a partial/failed scan is never indistinguishable
+    from "0 findings, clean scan"."""
     try:
         data = json.loads(stdout)
     except json.JSONDecodeError:
         logger.warning("semgrep output was not valid JSON")
-        return []
+        return [], [f"semgrep produced non-JSON output (exit code {returncode})"]
     results = data.get("results") or []
-    return [_to_finding(r) for r in results if isinstance(r, dict)]
+    findings = [_to_finding(r) for r in results if isinstance(r, dict)]
+    errors = [_format_error(e) for e in (data.get("errors") or [])]
+    # Invoked with --error: exit 0 = no findings, 1 = findings present.
+    # Anything else is a real failure (bad rule, crash) that "results: []"
+    # alone would otherwise hide.
+    if returncode not in (0, 1):
+        errors.append(f"semgrep exited with unexpected code {returncode}")
+    return findings, errors
+
+
+def _format_error(e: Any) -> str:
+    if isinstance(e, dict):
+        msg = e.get("message") or e.get("long_msg") or e.get("type") or "unknown semgrep error"
+        path = e.get("path")
+        return f"{path}: {msg}" if path else str(msg)
+    return str(e)
 
 
 def _to_finding(r: dict[str, Any]) -> Finding:
