@@ -8,7 +8,7 @@ and the fix is to align fix_single_file.j2 with INSTRUCTION_TEMPLATE.
 
 Run:
     python scripts/diag_lora_prompt_shape.py \
-        --adapter runs/20260428T122020Z/phase5/lora/final
+        --adapter runs/20260617T072213Z/phase5_v1_overfit/lora/final
 """
 from __future__ import annotations
 
