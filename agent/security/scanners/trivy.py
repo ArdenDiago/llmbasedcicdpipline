@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 from typing import Any
 
@@ -14,6 +15,17 @@ from ..normalize import Finding, normalize_confidence, normalize_severity
 logger = logging.getLogger(__name__)
 
 NAME = "trivy"
+
+# Baked into the sandbox image at build time (Project/Dockerfile) via
+# `trivy image --download-db-only --cache-dir OFFLINE_CACHE_DIR`, so the
+# ephemeral sandbox — which runs with network_disabled=True — can still
+# scan without a live vulnerability-DB fetch. Absent on a normal dev/eval
+# host, so this is a no-op there and trivy falls back to its default
+# online behavior. `--cache-dir` is passed explicitly rather than relying
+# on trivy's $HOME-derived default: the sandbox runs as an unprivileged,
+# unmapped UID (65534) whose $HOME doesn't resolve the way trivy expects,
+# which silently breaks --skip-db-update even when the DB is present.
+OFFLINE_CACHE_DIR = "/opt/trivy-cache"
 
 
 def run(target_path: str, timeout: int = 180) -> list[Finding]:
@@ -25,8 +37,16 @@ def run(target_path: str, timeout: int = 180) -> list[Finding]:
         "--quiet",
         "--scanners",
         "vuln,secret,misconfig",
-        target_path,
     ]
+    if os.path.isdir(OFFLINE_CACHE_DIR):
+        cmd += [
+            "--cache-dir", OFFLINE_CACHE_DIR,
+            "--skip-db-update",
+            "--skip-java-db-update",
+            "--skip-check-update",
+            "--offline-scan",
+        ]
+    cmd.append(target_path)
     logger.debug("trivy: %s", " ".join(cmd))
     proc = subprocess.run(
         cmd, capture_output=True, text=True, timeout=timeout, check=False

@@ -7,12 +7,14 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from . import collector, container, image
+from . import clone, collector, container, image
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +37,7 @@ def _docker_client():
     return docker.from_env()
 
 
-def create_app(docker_client_factory=_docker_client) -> FastAPI:
+def create_app(docker_client_factory=_docker_client, clone_repo_fn=clone.clone_repo) -> FastAPI:
     app = FastAPI(title="llm-cicd-sandbox", version="0.1.0")
 
     @app.get("/health")
@@ -71,7 +73,26 @@ def create_app(docker_client_factory=_docker_client) -> FastAPI:
             logger.exception("image ensure failed")
             raise HTTPException(status_code=502, detail=f"image unavailable: {exc}") from exc
 
-        result = container.run_sandbox(client, payload.model_dump(), image_ref)
+        # Clone happens on the host, before the network-isolated sandbox
+        # container exists (see agent/sandbox/clone.py). Without a repo_url
+        # we fall back to the stub path rather than failing the dispatch —
+        # some webhook payloads may legitimately omit it.
+        repo_path: Path | None = None
+        if payload.repo_url:
+            try:
+                repo_path = clone_repo_fn(payload.repo_url, payload.commit_sha)
+            except Exception as exc:
+                logger.exception("repo clone failed")
+                raise HTTPException(status_code=502, detail=f"repo clone failed: {exc}") from exc
+
+        try:
+            result = container.run_sandbox(
+                client, payload.model_dump(), image_ref, repo_path=repo_path
+            )
+        finally:
+            if repo_path is not None:
+                shutil.rmtree(repo_path, ignore_errors=True)
+
         return collector.collect(payload.model_dump(), result)
 
     return app

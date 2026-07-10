@@ -6,7 +6,14 @@ from typing import Protocol
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_IMAGE = "python:3.12-slim"
+# Reuses the control-plane "agent" image (Project/Dockerfile, tagged
+# llm-cicd-agent:latest by docker-compose.yml) as the sandbox execution
+# image: it already bundles git plus all four scanners and the `agent`
+# package itself, which the real (non-stub) runner script in container.py
+# needs to import. The sandbox container never receives the control-plane's
+# env vars/secrets (container.py's create() call sets none), so reusing the
+# image does not leak credentials into the per-push sandbox.
+DEFAULT_IMAGE = "llm-cicd-agent:latest"
 
 
 class _DockerClient(Protocol):

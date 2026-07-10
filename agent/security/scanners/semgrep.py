@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import subprocess
 from typing import Any
@@ -14,21 +15,37 @@ logger = logging.getLogger(__name__)
 NAME = "semgrep"
 _CWE_RE = re.compile(r"CWE-\d+")
 
+# Baked into the sandbox image at build time (Project/Dockerfile) as a
+# local copy of the same registry rulesets the evaluation harness uses
+# (r/python.lang.security etc. — see evaluation/run_scanners.py), so the
+# ephemeral sandbox can scan without --config auto's registry API call,
+# which needs network the sandbox doesn't have (network_disabled=True).
+# Absent on a normal dev/eval host, so this is a no-op there and semgrep
+# keeps using --config auto exactly as before.
+OFFLINE_RULES_DIR = "/opt/semgrep-rules"
+
 
 def run(target_path: str, timeout: int = 180) -> list[Finding]:
+    offline = os.path.isdir(OFFLINE_RULES_DIR)
+    config = OFFLINE_RULES_DIR if offline else "auto"
     cmd = [
         "semgrep",
         "scan",
         "--config",
-        "auto",
+        config,
         "--json",
         "--quiet",
         "--error",
         target_path,
     ]
+    # semgrep writes a log file under $HOME even for local --config runs;
+    # the sandbox's unprivileged, unmapped UID (65534) has no real home
+    # directory, so $HOME must point somewhere writable (the tmpfs /tmp
+    # mount) or semgrep crashes with a PermissionError before scanning.
+    env = {**os.environ, "HOME": "/tmp"} if offline else None
     logger.debug("semgrep: %s", " ".join(cmd))
     proc = subprocess.run(
-        cmd, capture_output=True, text=True, timeout=timeout, check=False
+        cmd, capture_output=True, text=True, timeout=timeout, check=False, env=env
     )
     return parse(proc.stdout or "{}")
 
