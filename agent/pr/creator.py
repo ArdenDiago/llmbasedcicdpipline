@@ -20,7 +20,10 @@ FIX_TITLE_MAX = 72
 @dataclass
 class PRRequest:
     finding: dict[str, Any]
-    diff: str
+    # Full corrected file content from the LLM layer (fix_single_file.j2
+    # asks for the entire file, never a unified diff) — see
+    # committer.write_full_file for why this isn't `git apply`-ed.
+    fixed_content: str
     confidence: float
     model_used: str
     repo_path: Path
@@ -66,8 +69,12 @@ def create_pr(
     returns True if tests pass. A False result aborts PR creation per
     CLAUDE.md ("NEVER create a PR if validation tests fail").
     """
-    if not req.diff.strip():
-        return PRResult(created=False, branch="", skipped_reason="empty diff")
+    if not req.fixed_content.strip():
+        return PRResult(created=False, branch="", skipped_reason="empty fix content")
+
+    target_relpath = req.finding.get("file", "")
+    if not target_relpath:
+        return PRResult(created=False, branch="", skipped_reason="finding has no file path")
 
     branch = brancher.branch_name(
         scanner=req.finding.get("scanner", "unknown"),
@@ -84,7 +91,7 @@ def create_pr(
     # this finding's branch/PR.
     committer.reset_to_base(req.repo_path, req.base_branch)
     committer.create_branch(req.repo_path, branch, base=req.base_branch)
-    committer.apply_patch(req.repo_path, req.diff)
+    committer.write_full_file(req.repo_path, target_relpath, req.fixed_content)
 
     if not validate(req.repo_path):
         return PRResult(

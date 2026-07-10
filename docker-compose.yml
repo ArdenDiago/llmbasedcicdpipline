@@ -19,6 +19,11 @@ services:
     env_file:
       - ../.env
     volumes:
+      # Root-equivalent host access — needed so manager.py can spin up
+      # per-push sandbox containers via docker-py. See "Control-Plane
+      # Privilege (Known Risk)" in agent/sandbox/CLAUDE.md before treating
+      # this as hardened; a scoped docker-socket-proxy is the mitigation
+      # if this matters for your deployment.
       - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
 

@@ -31,10 +31,30 @@ clones the repo, runs tests, runs security scans, then self-destructs.
 ## Container Security
 - No privileged mode — ever
 - Drop all capabilities except minimal set
-- No volume mounts to host filesystem (except /tmp for results)
+- Two host-filesystem mounts, both narrowly scoped: `/results` (rw, a
+  per-run temp dir holding only that run's scan/test JSON output — 0777
+  because the container's fixed UID 65534 doesn't otherwise have access;
+  see container.py) and `/workspace` (ro, the cloned repo checkout, only
+  when a repo_url was supplied). `/tmp` is a separate in-container tmpfs,
+  not a host mount.
 - Network disabled after initial clone
 - PID namespace isolation enabled
 - Auto-kill after 10 minute timeout
+
+## Control-Plane Privilege (Known Risk)
+The always-on `agent` service (this module's `manager.py`, run via
+`docker-compose.yml`) bind-mounts `/var/run/docker.sock` so it can create
+per-push sandbox containers via docker-py. Docker socket access is
+root-equivalent host access — the isolation above protects against a
+*hostile target repo's code* running inside the sandbox, but does nothing
+to contain an RCE-class bug in the control-plane process itself (e.g. a
+dependency vulnerability, a payload-parsing bug). This is a structural
+consequence of a long-lived service spinning up ephemeral containers via
+the Docker API, and is not currently mitigated. If this matters for your
+deployment, run the control-plane container against a scoped Docker API
+proxy (e.g. `docker-socket-proxy`) restricted to the specific
+`containers.create/start/wait/logs/remove` and `images.get/pull` calls
+this module actually makes, rather than the raw socket.
 
 ## Testing
 - Tests live in /tests/sandbox/

@@ -1,4 +1,4 @@
-"""Git operations: apply diff, stage, commit, push.
+"""Git operations: write the fix, stage, commit, push.
 
 Runs `git` via subprocess against a local clone path. Does not push to
 main/master — caller must pass the feature branch name.
@@ -6,11 +6,31 @@ main/master — caller must pass the feature branch name.
 from __future__ import annotations
 
 import logging
+import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+_FENCE_RE = re.compile(r"^\s*```[a-zA-Z0-9_+-]*\s*\n(.*?)\n```\s*$", re.DOTALL)
+
+
+def _strip_fences(text: str) -> str:
+    """Strip a single outer ```lang ... ``` fence if the whole response is
+    one; otherwise prefer the largest fenced block embedded in prose. Models
+    sometimes wrap the "ONLY the corrected file content" response in a fence
+    anyway despite being told not to explain. Mirrors
+    evaluation/patcher.py::strip_fences (duplicated rather than imported —
+    agent/ is the production path and shouldn't depend on evaluation/)."""
+    text = text.strip()
+    m = _FENCE_RE.match(text)
+    if m:
+        return m.group(1)
+    blocks = re.findall(r"```[a-zA-Z0-9_+-]*\s*\n(.*?)\n```", text, re.DOTALL)
+    if blocks:
+        return max(blocks, key=len)
+    return text
 
 PROTECTED_BRANCHES = frozenset({"main", "master"})
 
@@ -72,19 +92,32 @@ def create_branch(repo_path: Path, branch: str, base: str = "HEAD") -> None:
     _run(["git", "checkout", "-b", branch, base], repo_path)
 
 
-def apply_patch(repo_path: Path, diff_text: str) -> None:
-    if not diff_text.strip():
-        raise CommitError("empty diff")
-    proc = subprocess.run(
-        ["git", "apply", "--whitespace=nowarn", "-"],
-        cwd=str(repo_path),
-        input=diff_text,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if proc.returncode != 0:
-        raise CommitError(f"git apply failed: {proc.stderr.strip()}")
+def write_full_file(repo_path: Path, target_relpath: str, new_content: str) -> None:
+    """Overwrite target_relpath inside repo_path with new_content.
+
+    fix_single_file.j2 instructs the fix-generating model to return the
+    ENTIRE corrected file, not a unified diff, so the correct "apply"
+    operation is a direct overwrite — matching
+    evaluation/patcher.py::apply_full_file_replacement, the evaluation
+    harness's independently-correct implementation of the same contract.
+    A previous version of this function ran `git apply` on this same
+    full-file text, which no real model's response (as the prompt actually
+    instructs it to respond) could ever satisfy, since `git apply` requires
+    unified-diff syntax the model was never asked to produce.
+    """
+    if not target_relpath:
+        raise CommitError("empty target file path")
+    if not new_content.strip():
+        raise CommitError("empty fix content")
+
+    repo_root = repo_path.resolve()
+    target = (repo_path / target_relpath).resolve()
+    if repo_root not in target.parents:
+        raise CommitError(f"target path escapes repo: {target_relpath}")
+    if not target.exists():
+        raise CommitError(f"target file not found in repo: {target_relpath}")
+
+    target.write_text(_strip_fences(new_content), encoding="utf-8")
 
 
 def commit_all(repo_path: Path, message: str) -> str:

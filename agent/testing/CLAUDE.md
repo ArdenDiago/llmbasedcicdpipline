@@ -23,6 +23,12 @@ produces structured JSON results for downstream analysis.
    distinguish a target repo's own missing dependencies (which surface
    inside a successful pytest/Jest run as collection/import errors) from a
    genuine test failure. Known limitation — see the module's own findings.
+   The JS/TS runner specifically invokes `npx --yes jest`, which will try
+   to fetch `jest` from the registry if it isn't already resolvable from
+   the target repo's own `node_modules/.bin` — impossible under
+   `network_disabled=True`/`read_only=True`, so essentially any JS/TS repo
+   that didn't commit `node_modules` will report a runner-level error
+   rather than real test results.
 3. Parse results into unified format
 4. Return structured JSON: pass/fail counts, failure details, stack traces
 

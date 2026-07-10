@@ -72,7 +72,13 @@ class AuditEntry:
 
 @dataclass
 class FixProposal:
-    diff: str
+    # The fix-generating models are instructed (fix_single_file.j2) to return
+    # the entire corrected file, not a unified diff — this field holds that
+    # full-file text (fence-stripped by the caller before writing to disk),
+    # never a `git apply`-able patch. Named for what it actually is after a
+    # CRITICAL bug where a field named `diff` here was fed straight into
+    # `git apply`, which no real model's full-file response could ever satisfy.
+    fixed_content: str
     confidence: float
     model_used: str
     attempts: int
@@ -154,7 +160,7 @@ def analyze_finding(
         # unverified fix still reaches creator.create_pr()'s local,
         # sandboxed test-suite validation gate before any PR is opened.
         return FixProposal(
-            diff=resp.text, confidence=0.0, model_used=resp.model,
+            fixed_content=resp.text, confidence=0.0, model_used=resp.model,
             attempts=1, audit=audit,
             rationale="offline mode: accepted without paid confidence scoring",
         )
@@ -165,7 +171,7 @@ def analyze_finding(
 
     if not confidence.should_escalate(score, threshold):
         return FixProposal(
-            diff=resp.text,
+            fixed_content=resp.text,
             confidence=score or 0.0,
             model_used=resp.model,
             attempts=1,
@@ -177,7 +183,7 @@ def analyze_finding(
         # a fallback model for this task at all — config.task(...) is the
         # source of truth for escalation eligibility, not just documentation.
         return FixProposal(
-            diff=resp.text, confidence=score or 0.0, model_used=resp.model,
+            fixed_content=resp.text, confidence=score or 0.0, model_used=resp.model,
             attempts=1, audit=audit, error="escalation disabled",
         )
 
@@ -198,7 +204,7 @@ def analyze_finding(
 
     if category == "spurious":
         return FixProposal(
-            diff="", confidence=0.0, model_used=class_resp.model,
+            fixed_content="", confidence=0.0, model_used=class_resp.model,
             attempts=2, audit=audit, rationale="classified as spurious",
         )
 
@@ -212,7 +218,7 @@ def analyze_finding(
 
     if not confidence.should_escalate(sonnet_score, threshold):
         return FixProposal(
-            diff=sonnet_resp.text,
+            fixed_content=sonnet_resp.text,
             confidence=sonnet_score or 0.0,
             model_used=sonnet_resp.model,
             attempts=2,
@@ -226,7 +232,7 @@ def analyze_finding(
         # counters, so Opus was reachable for every task regardless of
         # whether its YAML entry declared a last_resort model.
         return FixProposal(
-            diff=sonnet_resp.text, confidence=sonnet_score or 0.0,
+            fixed_content=sonnet_resp.text, confidence=sonnet_score or 0.0,
             model_used=sonnet_resp.model, attempts=2, audit=audit,
             error="max_attempts below opus_min",
         )
@@ -241,7 +247,7 @@ def analyze_finding(
     )
 
     return FixProposal(
-        diff=opus_resp.text,
+        fixed_content=opus_resp.text,
         confidence=opus_score or 0.0,
         model_used=opus_resp.model,
         attempts=3,

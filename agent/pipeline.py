@@ -51,7 +51,7 @@ def default_pr_body(finding: dict[str, Any], fix: analyzer.FixProposal) -> str:
     return render_prompt(
         "pr_body",
         finding=finding,
-        fix_summary=fix.rationale or "See diff.",
+        fix_summary=fix.rationale or "See changed file.",
         confidence=f"{fix.confidence:.2f}",
         model_used=fix.model_used,
     )
@@ -71,13 +71,22 @@ def run(
     file_reader: FileReader = default_file_reader,
     pr_body: PRBodyRenderer = default_pr_body,
     min_severity: str = DEFAULT_MIN_SEVERITY,
-    base_branch: str = "main",
+    base_branch: str | None = None,
 ) -> PipelineResult:
     dispatch = envelope.get("dispatch") or {}
     repo_full_name = dispatch.get("repo_full_name")
     commit_sha = dispatch.get("commit_sha") or ""
     if not repo_full_name:
         raise ValueError("envelope missing dispatch.repo_full_name")
+
+    # base_branch defaults to whatever branch was actually pushed
+    # (envelope["dispatch"]["branch"], populated by collector.collect() from
+    # the webhook payload) rather than hardcoding "main" — a fix generated
+    # against a non-main branch's file content must be committed against
+    # that same branch's tip, not main's, or the patch is applied to the
+    # wrong version of the file. An explicit base_branch argument still
+    # overrides this (e.g. for tests or a caller that wants main regardless).
+    effective_base_branch = base_branch or dispatch.get("branch") or "main"
 
     findings = _extract_findings(envelope)
     result = PipelineResult(processed=0)
@@ -105,21 +114,21 @@ def run(
             config=config,
         )
 
-        if fix.error or not fix.diff.strip():
+        if fix.error or not fix.fixed_content.strip():
             result.skipped.append(
-                {"finding": finding, "reason": fix.error or "no diff"}
+                {"finding": finding, "reason": fix.error or "no fix content"}
             )
             continue
 
         body = pr_body(finding, fix)
         req = creator.PRRequest(
             finding=finding,
-            diff=fix.diff,
+            fixed_content=fix.fixed_content,
             confidence=fix.confidence,
             model_used=fix.model_used,
             repo_path=repo_path,
             repo_full_name=repo_full_name,
-            base_branch=base_branch,
+            base_branch=effective_base_branch,
             commit_sha=commit_sha,
             pr_body=body,
         )

@@ -76,9 +76,14 @@ def test_push_raises_branch_already_exists_on_non_fast_forward(tmp_path: Path):
         committer.push(repo, "fix/dup")
 
 
-def test_apply_patch_rejects_empty(repo: Path):
+def test_write_full_file_rejects_empty_content(repo: Path):
     with pytest.raises(committer.CommitError):
-        committer.apply_patch(repo, "   \n")
+        committer.write_full_file(repo, "a.txt", "   \n")
+
+
+def test_write_full_file_rejects_empty_target_path(repo: Path):
+    with pytest.raises(committer.CommitError):
+        committer.write_full_file(repo, "", "hello world\n")
 
 
 def test_create_branch_and_commit_flow(repo: Path):
@@ -100,28 +105,32 @@ def test_commit_message_format():
     assert "Model: deepseek-coder:6.7b" in msg
 
 
-def test_apply_patch_applies_unified_diff(repo: Path):
+def test_write_full_file_overwrites_target(repo: Path):
+    """fix_single_file.j2 instructs the model to return the entire
+    corrected file, not a unified diff — this is the corrected 'apply'
+    operation a CRITICAL bug used to implement as `git apply` instead."""
     committer.create_branch(repo, "fix/test-2")
-    diff = (
-        "diff --git a/a.txt b/a.txt\n"
-        "--- a/a.txt\n"
-        "+++ b/a.txt\n"
-        "@@ -1 +1 @@\n"
-        "-hello\n"
-        "+hello world\n"
-    )
-    committer.apply_patch(repo, diff)
-    assert (repo / "a.txt").read_text() == "hello world\n"
+    committer.write_full_file(repo, "a.txt", "hello world\n")
+    # _strip_fences() strips surrounding whitespace (matching
+    # evaluation/patcher.py's identical convention for LLM output quirks),
+    # so a lone trailing newline is not preserved.
+    assert (repo / "a.txt").read_text() == "hello world"
 
 
-def test_apply_patch_surfaces_git_error(repo: Path):
-    bogus = (
-        "diff --git a/missing.txt b/missing.txt\n"
-        "--- a/missing.txt\n"
-        "+++ b/missing.txt\n"
-        "@@ -1 +1 @@\n"
-        "-x\n"
-        "+y\n"
-    )
+def test_write_full_file_strips_code_fence(repo: Path):
+    """Models sometimes wrap the 'ONLY the corrected file content'
+    response in a ```lang fence anyway despite being told not to explain."""
+    committer.create_branch(repo, "fix/test-fence")
+    fenced = "```python\nhello world\n```"
+    committer.write_full_file(repo, "a.txt", fenced)
+    assert (repo / "a.txt").read_text() == "hello world"
+
+
+def test_write_full_file_rejects_missing_target(repo: Path):
     with pytest.raises(committer.CommitError):
-        committer.apply_patch(repo, bogus)
+        committer.write_full_file(repo, "missing.txt", "y\n")
+
+
+def test_write_full_file_rejects_path_escaping_repo(repo: Path):
+    with pytest.raises(committer.CommitError):
+        committer.write_full_file(repo, "../../etc/passwd", "malicious\n")

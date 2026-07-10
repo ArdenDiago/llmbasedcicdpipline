@@ -112,7 +112,7 @@ def test_full_pipeline_creates_one_pr_per_high_severity_finding(tmp_path: Path, 
     # naming, PR body rendering, and severity filtering real.
     monkeypatch.setattr(creator.committer, "reset_to_base", lambda *a, **k: None)
     monkeypatch.setattr(creator.committer, "create_branch", lambda *a, **k: None)
-    monkeypatch.setattr(creator.committer, "apply_patch", lambda *a, **k: None)
+    monkeypatch.setattr(creator.committer, "write_full_file", lambda *a, **k: None)
     monkeypatch.setattr(creator.committer, "commit_all", lambda *a, **k: "sha123")
     monkeypatch.setattr(creator.committer, "push", lambda *a, **k: None)
 
@@ -127,7 +127,12 @@ def test_full_pipeline_creates_one_pr_per_high_severity_finding(tmp_path: Path, 
 
     monkeypatch.setattr(creator.github_api, "create_pull_request", fake_create_pr)
 
-    fix_text = "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-bad\n+good\n"
+    # fix_single_file.j2 asks the model for the ENTIRE corrected file, not a
+    # diff — this must be realistic full-file content, not diff-shaped text,
+    # or this test would mask the same CRITICAL bug it's meant to catch
+    # (committer.write_full_file, not `git apply`, is what actually consumes
+    # this text against a real repo).
+    fix_text = "def handler():\n    return 'good'\n"
     clients = analyzer.ClientSet(
         deepseek=_FakeLLM("deepseek-coder:6.7b", fix_text),
         haiku=_FakeHaiku(
@@ -172,7 +177,7 @@ def test_full_pipeline_respects_failing_validation(tmp_path: Path, monkeypatch):
 
     monkeypatch.setattr(creator.committer, "reset_to_base", lambda *a, **k: None)
     monkeypatch.setattr(creator.committer, "create_branch", lambda *a, **k: None)
-    monkeypatch.setattr(creator.committer, "apply_patch", lambda *a, **k: None)
+    monkeypatch.setattr(creator.committer, "write_full_file", lambda *a, **k: None)
     committed = []
     pushed = []
     monkeypatch.setattr(
@@ -191,7 +196,7 @@ def test_full_pipeline_respects_failing_validation(tmp_path: Path, monkeypatch):
 
     clients = analyzer.ClientSet(
         deepseek=_FakeLLM(
-            "deepseek", "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@\n-x\n+y\n",
+            "deepseek", "def handler():\n    return 'fixed'\n",
         ),
         haiku=_FakeHaiku(
             classify_text='{"category": "simple"}',

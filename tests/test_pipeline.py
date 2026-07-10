@@ -34,9 +34,9 @@ def _envelope(findings: list[dict]) -> dict:
     }
 
 
-def _fix(diff: str = "diff --git a/x b/x\n", error: str | None = None) -> analyzer.FixProposal:
+def _fix(fixed_content: str = "print('fixed')\n", error: str | None = None) -> analyzer.FixProposal:
     return analyzer.FixProposal(
-        diff=diff,
+        fixed_content=fixed_content,
         confidence=0.8,
         model_used="deepseek-coder:6.7b",
         attempts=1,
@@ -140,6 +140,73 @@ def test_happy_path_creates_one_pr_per_finding(tmp_path: Path, clients, monkeypa
     assert res.processed == 2
     assert calls == ["B1", "S1"]
     assert res.summary() == {"processed": 2, "created": 2, "skipped": 0}
+
+
+def test_base_branch_defaults_to_dispatch_branch_not_main(tmp_path: Path, clients, monkeypatch):
+    """Regression test: base_branch used to be hardcoded to 'main' regardless
+    of which branch was actually pushed and scanned. A fix generated against
+    a non-main branch's file content must be committed against that same
+    branch's tip, or the fix gets applied to the wrong version of the file."""
+    findings = [{"scanner": "bandit", "rule_id": "B1", "severity": "high", "file": "a.py"}]
+    monkeypatch.setattr(analyzer, "analyze_finding", lambda **kw: _fix())
+
+    captured_base_branches = []
+
+    def fake_create_pr(req, validate, client=None):
+        captured_base_branches.append(req.base_branch)
+        return creator.PRResult(created=True, branch="b", pr=None)
+
+    monkeypatch.setattr(creator, "create_pr", fake_create_pr)
+
+    envelope = {
+        "dispatch": {
+            "repo_full_name": "owner/repo",
+            "commit_sha": "deadbeef",
+            "branch": "feature/some-branch",
+        },
+        "scanners": {"findings": findings},
+    }
+
+    pipeline.run(
+        envelope=envelope, repo_path=tmp_path,
+        clients=clients, config=_config(),
+        validate=lambda _: True, github_client=MagicMock(),
+        file_reader=lambda p, r: "src", pr_body=lambda f, fix: "body",
+    )
+
+    assert captured_base_branches == ["feature/some-branch"]
+
+
+def test_explicit_base_branch_overrides_dispatch_branch(tmp_path: Path, clients, monkeypatch):
+    findings = [{"scanner": "bandit", "rule_id": "B1", "severity": "high", "file": "a.py"}]
+    monkeypatch.setattr(analyzer, "analyze_finding", lambda **kw: _fix())
+
+    captured_base_branches = []
+
+    def fake_create_pr(req, validate, client=None):
+        captured_base_branches.append(req.base_branch)
+        return creator.PRResult(created=True, branch="b", pr=None)
+
+    monkeypatch.setattr(creator, "create_pr", fake_create_pr)
+
+    envelope = {
+        "dispatch": {
+            "repo_full_name": "owner/repo",
+            "commit_sha": "deadbeef",
+            "branch": "feature/some-branch",
+        },
+        "scanners": {"findings": findings},
+    }
+
+    pipeline.run(
+        envelope=envelope, repo_path=tmp_path,
+        clients=clients, config=_config(),
+        validate=lambda _: True, github_client=MagicMock(),
+        file_reader=lambda p, r: "src", pr_body=lambda f, fix: "body",
+        base_branch="release",
+    )
+
+    assert captured_base_branches == ["release"]
 
 
 def test_create_pr_failure_does_not_abort_rest_of_batch(tmp_path: Path, clients, monkeypatch):

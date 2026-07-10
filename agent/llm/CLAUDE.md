@@ -26,12 +26,20 @@ Implements the model balancing strategy (escalation chain).
 - prompts/            → All prompt templates (Jinja2)
 
 ## Prompt Templates (agent/llm/prompts/)
-- classify_error.j2       → Error classification prompt
-- fix_single_file.j2      → Single-file fix generation
-- fix_multi_file.j2       → Multi-file fix generation
-- security_analysis.j2    → Security finding analysis
-- pr_body.j2              → PR description generation
-- confidence_eval.j2      → Self-evaluation of fix quality
+- classify_error.j2       → Error classification prompt (dispatched)
+- fix_single_file.j2      → Single-file fix generation (dispatched — the
+                            only fix path analyzer.py currently has)
+- fix_multi_file.j2       → Multi-file fix generation. Template exists and
+                            has a routing entry in model_balancing.yml, but
+                            **no orchestration code anywhere calls it** —
+                            analyzer.py has no multi-file dispatch logic at
+                            all. Aspirational until that's written.
+- security_analysis.j2    → Security finding analysis. Same status as
+                            fix_multi_file.j2 — template and config exist,
+                            nothing dispatches it.
+- pr_body.j2              → PR description generation (dispatched)
+- confidence_eval.j2      → Independent confidence scoring via Haiku
+                            (dispatched)
 
 ## Token Budgets
 - Error classification:  max 500 in  / 100 out

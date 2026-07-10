@@ -132,7 +132,7 @@ def test_spurious_classification_short_circuits(cfg):
     )
     proposal = analyzer.analyze_finding(FINDING, "x", "r", "c", clients, cfg)
     assert proposal.attempts == 2
-    assert proposal.diff == ""
+    assert proposal.fixed_content == ""
     assert "spurious" in (proposal.rationale or "")
 
 
