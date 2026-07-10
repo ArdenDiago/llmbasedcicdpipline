@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import stat
+
 from agent.sandbox import container
 
 from .conftest import FakeContainer, FakeDockerClient
@@ -86,6 +88,19 @@ def test_run_sandbox_handles_missing_results_json(tmp_path, monkeypatch):
 
     assert result.results is None
     assert result.exit_code == 0
+
+
+def test_run_sandbox_results_dir_is_writable_by_other_users():
+    """mkdtemp defaults to 0700, which the sandbox's unprivileged UID 65534
+    can't write into once bind-mounted — regression test for a bug where
+    the container crashed with PermissionError writing results.json."""
+    client = FakeDockerClient(container=FakeContainer(results_payload={}))
+
+    container.run_sandbox(client, PAYLOAD, image="python:3.12-slim")
+
+    results_host_dir = list(client.last_create_kwargs["volumes"].keys())[0]
+    mode = stat.S_IMODE(container.Path(results_host_dir).stat().st_mode)
+    assert mode & stat.S_IWOTH
 
 
 def test_run_sandbox_without_repo_path_uses_stub_command():

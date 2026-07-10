@@ -1,24 +1,11 @@
 from __future__ import annotations
 
+import stat
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
 from agent.sandbox import clone
-
-
-def _fake_run(returncode: int = 0, stderr: str = ""):
-    def _inner(cmd, capture_output, text, timeout, check):
-        class _Proc:
-            pass
-
-        p = _Proc()
-        p.returncode = returncode
-        p.stderr = stderr
-        return p
-
-    return _inner
 
 
 def test_clone_repo_success(tmp_path, monkeypatch):
@@ -39,6 +26,26 @@ def test_clone_repo_success(tmp_path, monkeypatch):
     assert calls[0][:2] == ["git", "clone"]
     assert calls[0][-2] == "https://example.com/acme/service.git"
     assert calls[1] == ["git", "-C", str(dest), "checkout", "--quiet", "abc123"]
+
+    clone.shutil.rmtree(dest, ignore_errors=True)
+
+
+def test_clone_repo_leaves_dir_traversable_by_other_users(monkeypatch):
+    """mkdtemp defaults to 0700, which the sandbox's unprivileged UID 65534
+    can't traverse once bind-mounted — regression test for a bug where every
+    scanner silently "saw" an empty tree instead of erroring."""
+    def fake_run(cmd, **kwargs):
+        class _Proc:
+            returncode = 0
+            stderr = ""
+        return _Proc()
+
+    monkeypatch.setattr(clone.subprocess, "run", fake_run)
+
+    dest = clone.clone_repo("https://example.com/acme/service.git", "abc123")
+
+    mode = stat.S_IMODE(dest.stat().st_mode)
+    assert mode & stat.S_IROTH and mode & stat.S_IXOTH
 
     clone.shutil.rmtree(dest, ignore_errors=True)
 

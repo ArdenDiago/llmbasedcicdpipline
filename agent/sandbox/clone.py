@@ -32,6 +32,13 @@ def clone_repo(repo_url: str, commit_sha: str, timeout: int = DEFAULT_CLONE_TIME
     directory (see manager.py, which removes it after the sandbox run).
     """
     dest = Path(tempfile.mkdtemp(prefix="sandbox-src-"))
+    # mkdtemp defaults to 0700, owned by the host user. The checkout is
+    # later bind-mounted read-only into the sandbox container, which always
+    # runs as the fixed unprivileged UID 65534 (nobody) — matching neither
+    # owner nor group here, so without this it can't even traverse into the
+    # directory (every scanner then silently "sees" an empty, unreadable
+    # tree rather than erroring, which is worse: it looks like a clean scan).
+    dest.chmod(0o755)
     try:
         _run(["git", "clone", "--quiet", repo_url, str(dest)], timeout)
         _run(["git", "-C", str(dest), "checkout", "--quiet", commit_sha], timeout)

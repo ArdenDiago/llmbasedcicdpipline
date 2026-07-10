@@ -120,6 +120,12 @@ def run_sandbox(
     """
     container = None
     results_host_dir = Path(tempfile.mkdtemp(prefix=f"sandbox-{uuid.uuid4().hex[:8]}-"))
+    # mkdtemp defaults to 0700, owned by the host user. The container always
+    # runs as the fixed unprivileged UID 65534 (nobody), which matches
+    # neither owner nor group here, so it cannot write results.json without
+    # opening up the "other" bits. This directory is ephemeral, host-local,
+    # and holds nothing but this run's own scan/test JSON output.
+    results_host_dir.chmod(0o777)
     volumes = {str(results_host_dir): {"bind": "/results", "mode": "rw"}}
     if repo_path is not None:
         volumes[str(repo_path)] = {"bind": REPO_BIND_PATH, "mode": "ro"}
