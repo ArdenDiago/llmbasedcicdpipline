@@ -249,6 +249,36 @@ def test_file_content_truncated_against_max_tokens_in_budget(cfg):
     assert "truncated to fit token budget" in captured_prompts[0]
 
 
+def test_offline_mode_stops_at_tier_1_without_any_haiku_call(cfg, monkeypatch):
+    """Paper §III.D: an 'offline' switch forces the cascade to terminate at
+    tier 1, sacrificing fix quality for strict data confinement. Confidence
+    scoring is a Haiku (paid, Anthropic API) call, so offline mode must skip
+    it entirely, not just skip Sonnet/Opus — otherwise 'never leaves tier 1'
+    would be false the moment a low-confidence fix needs scoring."""
+    monkeypatch.setenv(analyzer.OFFLINE_ENV_VAR, "1")
+
+    class ExplodingHaiku:
+        def complete(self, *a, **k):
+            raise AssertionError("offline mode must never call a paid tier")
+
+    clients = analyzer.ClientSet(
+        deepseek=ScriptedClient("ollama", "deepseek-coder:6.7b", "--- a/x\n+++ b/x\n+fixed"),
+        haiku=ExplodingHaiku(),
+        sonnet=ExplodingHaiku(),
+        opus=ExplodingHaiku(),
+    )
+    proposal = analyzer.analyze_finding(FINDING, "x", "r", "c", clients, cfg)
+    assert proposal.attempts == 1
+    assert proposal.model_used == "deepseek-coder:6.7b"
+    assert "offline mode" in (proposal.rationale or "")
+    assert [e.stage for e in proposal.audit] == ["fix"]
+
+
+def test_offline_mode_off_by_default(cfg, monkeypatch):
+    monkeypatch.delenv(analyzer.OFFLINE_ENV_VAR, raising=False)
+    assert analyzer.is_offline_mode() is False
+
+
 def test_language_detection_in_prompt():
     assert analyzer._language_for("app/main.py") == "python"
     assert analyzer._language_for("x.ts") == "typescript"

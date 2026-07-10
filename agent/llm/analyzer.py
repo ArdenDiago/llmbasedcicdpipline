@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -31,6 +32,16 @@ from .clients.base import LLMClient, LLMResponse
 from .config import BalancingConfig
 
 logger = logging.getLogger(__name__)
+
+# Global data-confinement switch (paper §III.D "Data Boundaries"): when set,
+# the cascade never leaves tier 1 (self-hosted DeepSeek), so private code
+# never reaches the Anthropic API in any form, including a Haiku confidence
+# check. Sacrifices verified fix quality for strict data confinement.
+OFFLINE_ENV_VAR = "AGENT_OFFLINE"
+
+
+def is_offline_mode() -> bool:
+    return os.environ.get(OFFLINE_ENV_VAR, "").strip() == "1"
 
 # Rough chars-per-token heuristic — no tokenizer dependency. Good enough to
 # stop a large file from silently blowing past a task's max_tokens_in budget
@@ -134,6 +145,20 @@ def analyze_finding(
     )
     resp = clients.deepseek.complete(fix_prompt, max_tokens=task.max_tokens_out)
     audit.append(_entry(1, resp, "fix", None))
+
+    if is_offline_mode():
+        # Global data-confinement switch: never leave tier 1, not even for
+        # Haiku confidence scoring — that's also a paid Anthropic API call,
+        # and offline mode's whole point is that private code never leaves
+        # the developer's machine unless a paid tier is reached. The
+        # unverified fix still reaches creator.create_pr()'s local,
+        # sandboxed test-suite validation gate before any PR is opened.
+        return FixProposal(
+            diff=resp.text, confidence=0.0, model_used=resp.model,
+            attempts=1, audit=audit,
+            rationale="offline mode: accepted without paid confidence scoring",
+        )
+
     score = _evaluate_confidence(
         clients, config, finding, file_contents, resp.text, audit, attempt=1,
     )

@@ -15,20 +15,28 @@ import logging
 import subprocess
 from pathlib import Path
 
+from agent.security import cache as scanner_cache
 from agent.security import run_scan
 from agent.security.scanners import bandit, semgrep
 
 logger = logging.getLogger(__name__)
 
 
-def scan_dataset(dataset_dir: Path, timeout: int = 180) -> dict[str, Path]:
+def scan_dataset(
+    dataset_dir: Path, timeout: int = 180, cache_dir: Path | None = None,
+) -> dict[str, Path]:
+    """cache_dir is opt-in: pass a directory (e.g. .cache/scanner_outputs) to
+    skip re-running scanners on an unchanged source/ tree across repeated
+    benchmark runs — critical for reproducibility the same way the LLM
+    response cache is (agent/llm/cache.py). Omit it for the previous,
+    always-rerun behavior."""
     source = dataset_dir / "source"
     if not source.is_dir():
         raise FileNotFoundError(f"no source/ in {dataset_dir}")
 
     written: dict[str, Path] = {}
 
-    written["agent"] = _write_agent(dataset_dir, source, timeout)
+    written["agent"] = _write_agent(dataset_dir, source, timeout, cache_dir)
 
     for tool, runner in (("bandit", bandit), ("semgrep", semgrep)):
         try:
@@ -50,8 +58,13 @@ def scan_dataset(dataset_dir: Path, timeout: int = 180) -> dict[str, Path]:
     return written
 
 
-def _write_agent(dataset_dir: Path, source: Path, timeout: int) -> Path:
-    result = run_scan.run_all(str(source), per_scanner_timeout=timeout)
+def _write_agent(dataset_dir: Path, source: Path, timeout: int, cache_dir: Path | None) -> Path:
+    if cache_dir is not None:
+        result = scanner_cache.run_all_cached(
+            run_scan.run_all, str(source), cache_dir=cache_dir, per_scanner_timeout=timeout,
+        )
+    else:
+        result = run_scan.run_all(str(source), per_scanner_timeout=timeout)
     return _write_findings(
         dataset_dir / "agent.json",
         result.get("findings", []),
