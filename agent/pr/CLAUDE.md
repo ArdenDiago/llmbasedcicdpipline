@@ -54,3 +54,14 @@ committing, and PR body generation.
 - PR title format: "fix({scanner}): {short_description}"
 - One PR per finding — do not batch unrelated fixes
 - GITHUB_TOKEN must have repo and pull_request scopes
+
+## Syntax validity gate
+`committer.write_full_file()` runs `ast.parse()` on `.py` targets before
+writing, raising `CommitError` if the fix doesn't even parse. This is not
+a separate pipeline step — it lives in the patch-write function itself,
+because the sandboxed test-suite re-run in `agent/sandbox/manager.py`
+(`_default_validate_factory`) returns `True` unconditionally when the
+target repo has no discoverable test suite. Without this check, a repo
+with no tests would get zero validation of any kind before a
+syntactically broken patch reached a PR. Non-`.py` targets are not
+syntax-checked (mirrors `evaluation/patcher.py`'s Python-only scope).

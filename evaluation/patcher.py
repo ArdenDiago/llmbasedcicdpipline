@@ -74,6 +74,23 @@ def apply_full_file_replacement(
     cleaned = strip_fences(new_content)
     target.write_text(cleaned, encoding="utf-8")
 
+    # A degenerate fenced response like "```python\n\n```" is non-blank as
+    # raw text (the backticks alone are non-whitespace), so a caller's
+    # blank-response check against the RAW model output (fix_eval.py checks
+    # resp.text.strip() before this function is ever called) misses this
+    # case. Checked here instead, against the post-fence-stripping content:
+    # ast.parse("") is valid Python (an empty module), so without this the
+    # .py branch of _validate() below would silently record an empty file
+    # as "parses cleanly," inflating fix_safety (and potentially
+    # fix_accuracy, if a re-scan then finds nothing to flag in an empty
+    # file) for what is actually a non-answer from the model.
+    if not cleaned.strip():
+        return PatchResult(
+            workdir=workdir_root, target_file=target, parse_ok=False,
+            parse_error="empty content after fence-stripping",
+            original_bytes=original_bytes, new_bytes=target.stat().st_size,
+        )
+
     parse_ok, err = _validate(target)
     return PatchResult(
         workdir=workdir_root,

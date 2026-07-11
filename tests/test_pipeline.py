@@ -97,6 +97,30 @@ def test_skips_when_analyzer_returns_error(tmp_path: Path, clients, monkeypatch)
     assert res.skipped[0]["reason"] == "escalation disabled"
 
 
+def test_spurious_classification_gets_specific_skip_reason(tmp_path: Path, clients, monkeypatch):
+    """Regression test: when Haiku classifies a finding as spurious,
+    analyze_finding() returns fix.error=None with fix.rationale="classified
+    as spurious" instead. Before this fix, the skip reason only ever
+    consulted fix.error, so this case fell through to the generic "no fix
+    content" reason, losing the more informative rationale that was sitting
+    right there on the FixProposal."""
+    findings = [{"scanner": "bandit", "rule_id": "B2", "severity": "high", "file": "b.py"}]
+    spurious_fix = analyzer.FixProposal(
+        fixed_content="", confidence=0.0, model_used="haiku",
+        attempts=2, audit=[], rationale="classified as spurious",
+    )
+    monkeypatch.setattr(analyzer, "analyze_finding", lambda **kw: spurious_fix)
+
+    res = pipeline.run(
+        envelope=_envelope(findings), repo_path=tmp_path,
+        clients=clients, config=_config(),
+        validate=lambda _: True, github_client=MagicMock(),
+        file_reader=lambda p, r: "src", pr_body=lambda f, fix: "body",
+    )
+
+    assert res.skipped[0]["reason"] == "classified as spurious"
+
+
 def test_skips_unreadable_file(tmp_path: Path, clients, monkeypatch):
     findings = [{"scanner": "bandit", "rule_id": "B2", "severity": "high", "file": "missing.py"}]
 
@@ -301,6 +325,87 @@ def test_create_pr_failure_does_not_abort_rest_of_batch(tmp_path: Path, clients,
     assert res.processed == 2
     assert res.summary()["created"] == 1  # only S1 succeeded
     assert any(s["reason"].startswith("create_pr error") for s in res.skipped)
+
+
+def test_branch_already_exists_gets_a_specific_skip_reason(tmp_path: Path, clients, monkeypatch):
+    """Regression test: branch names are deterministic (brancher.branch_name()
+    hashes file+line+commit_sha), so a webhook retry or manager restart
+    reproducing the same finding pushes to a branch that already exists —
+    almost certainly because a PR for it was already opened, not a real
+    failure. Before this fix, BranchAlreadyExistsError fell into the generic
+    create_pr except clause and got an opaque raw-git-stderr skip reason
+    instead of a reason that actually says what happened."""
+    findings = [{"scanner": "bandit", "rule_id": "B1", "severity": "high", "file": "a.py"}]
+    monkeypatch.setattr(analyzer, "analyze_finding", lambda **kw: _fix())
+
+    def already_exists(req, validate, client=None):
+        raise creator.committer.BranchAlreadyExistsError("non-fast-forward")
+
+    monkeypatch.setattr(creator, "create_pr", already_exists)
+
+    res = pipeline.run(
+        envelope=_envelope(findings), repo_path=tmp_path,
+        clients=clients, config=_config(),
+        validate=lambda _: True, github_client=MagicMock(),
+        file_reader=lambda p, r: "src", pr_body=lambda f, fix: "body",
+    )
+
+    assert res.summary()["created"] == 0
+    assert res.skipped[0]["reason"] == "pr likely already exists"
+
+
+def test_analyze_finding_failure_does_not_abort_rest_of_batch(tmp_path: Path, clients):
+    """Regression test: analyzer.analyze_finding() and the pr_body renderer
+    both do real LLM I/O (Ollama, Haiku/Sonnet/Opus). Before the fix, only
+    create_pr() was wrapped in try/except — an uncaught error from
+    analyze_finding() itself (e.g. Ollama unreachable) propagated out of
+    pipeline.run() entirely, silently dropping every remaining finding in
+    the batch instead of just skipping the one that failed."""
+    findings = [
+        {"scanner": "bandit", "rule_id": "B1", "severity": "high", "file": "a.py"},
+        {"scanner": "semgrep", "rule_id": "S1", "severity": "critical", "file": "b.py"},
+    ]
+    calls = []
+
+    def flaky_analyze(**kw):
+        calls.append(kw["finding"]["rule_id"])
+        if kw["finding"]["rule_id"] == "B1":
+            raise RuntimeError("ollama unreachable")
+        return _fix()
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(analyzer, "analyze_finding", flaky_analyze)
+        mp.setattr(creator, "create_pr", lambda req, validate, client=None: creator.PRResult(
+            created=True, branch="b", pr=github_api.PullRequestRef(1, "u", "b", "main"),
+        ))
+
+        res = pipeline.run(
+            envelope=_envelope(findings), repo_path=tmp_path,
+            clients=clients, config=_config(),
+            validate=lambda _: True, github_client=MagicMock(),
+            file_reader=lambda p, r: "src", pr_body=lambda f, fix: "body",
+        )
+
+    assert calls == ["B1", "S1"]  # both attempted despite B1's failure
+    assert res.processed == 2
+    assert res.summary()["created"] == 1  # only S1 succeeded
+    assert any(s["reason"].startswith("analysis error") for s in res.skipped)
+
+
+def test_default_file_reader_relativizes_absolute_sandbox_path(tmp_path: Path):
+    """Regression test: scanners run inside the sandbox container, where the
+    checkout is bind-mounted read-only at /workspace (container.REPO_BIND_PATH),
+    so every real finding's "file" field is an absolute "/workspace/..." path
+    — not relative to repo_path, which is the *host* clone directory
+    clone.py created (a different, per-run path). Before the fix,
+    `repo_path / rel` silently discarded repo_path for an absolute rel
+    (pathlib join semantics), so this always raised FileNotFoundError and
+    every real finding was silently skipped as a "read error"."""
+    (tmp_path / "app.py").write_text("print('hi')\n", encoding="utf-8")
+
+    contents = pipeline.default_file_reader(tmp_path, "/workspace/app.py")
+
+    assert contents == "print('hi')\n"
 
 
 def test_requires_repo_full_name(tmp_path: Path, clients):

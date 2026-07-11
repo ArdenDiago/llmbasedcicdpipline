@@ -16,6 +16,8 @@ import logging
 import subprocess
 import sys
 import time
+from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 from . import normalize
@@ -96,6 +98,7 @@ def run_all(
 
     pool.shutdown(wait=False, cancel_futures=True)
 
+    findings = _relativize_findings(findings, target_path)
     deduped = normalize.dedupe(findings)
     return {
         "target": target_path,
@@ -108,6 +111,41 @@ def run_all(
             "duration_seconds": round(time.monotonic() - started, 3),
         },
     }
+
+
+def _relativize_findings(
+    findings: list[normalize.Finding], target_path: str
+) -> list[normalize.Finding]:
+    """Some scanners (confirmed for bandit) report the file path exactly as
+    passed on their command line — when run_all() is called against an
+    absolute target_path (e.g. the sandbox container's /workspace bind
+    mount, see container.py), that means an absolute path, not one relative
+    to target_path. security/CLAUDE.md's documented Unified Finding Format
+    promises a relative "file" field (e.g. "app/auth.py"); every downstream
+    consumer (agent/pipeline.py's default_file_reader, agent/pr/committer.py's
+    write_full_file) joins repo_path with this field, and pathlib silently
+    discards repo_path when the right-hand side is absolute — so leaving an
+    absolute path here would make every real finding from a real sandboxed
+    scan silently unreadable/unwritable downstream. Mirrors
+    evaluation/scan.py's own _relativize(), which has to work around the
+    identical issue for its (separate, offline) purposes."""
+    target = Path(target_path).resolve()
+    relativized = []
+    for f in findings:
+        if not f.file:
+            relativized.append(f)
+            continue
+        p = Path(f.file)
+        if not p.is_absolute():
+            relativized.append(f)
+            continue
+        try:
+            rel = str(p.resolve().relative_to(target))
+        except ValueError:
+            relativized.append(f)
+            continue
+        relativized.append(replace(f, file=rel))
+    return relativized
 
 
 def _safe_run(name: str, target_path: str, timeout: int) -> tuple[list[normalize.Finding], list[str]]:

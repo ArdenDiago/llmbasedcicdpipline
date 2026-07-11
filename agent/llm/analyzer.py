@@ -88,36 +88,6 @@ class FixProposal:
 
 
 @dataclass
-class CascadeStats:
-    """Aggregate tier-routing counts across N findings."""
-    total: int = 0
-    tier1_resolved: int = 0   # DeepSeek succeeded (attempts == 1)
-    tier2_resolved: int = 0   # Haiku+Sonnet succeeded (attempts == 2)
-    tier3_resolved: int = 0   # Opus used (attempts == 3)
-    spurious: int = 0         # Haiku classified as spurious
-
-    @property
-    def escalation_rate_1to2(self) -> float:
-        return (self.total - self.tier1_resolved) / self.total if self.total else 0.0
-
-    @property
-    def escalation_rate_2to3(self) -> float:
-        eligible = self.total - self.tier1_resolved - self.spurious
-        return self.tier3_resolved / eligible if eligible else 0.0
-
-    def record(self, proposal: "FixProposal") -> None:
-        self.total += 1
-        if proposal.rationale == "classified as spurious":
-            self.spurious += 1
-        elif proposal.attempts == 1:
-            self.tier1_resolved += 1
-        elif proposal.attempts == 2:
-            self.tier2_resolved += 1
-        else:
-            self.tier3_resolved += 1
-
-
-@dataclass
 class ClientSet:
     deepseek: LLMClient
     haiku: LLMClient

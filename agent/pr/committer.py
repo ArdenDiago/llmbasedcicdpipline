@@ -5,6 +5,7 @@ main/master — caller must pass the feature branch name.
 """
 from __future__ import annotations
 
+import ast
 import logging
 import re
 import subprocess
@@ -104,10 +105,26 @@ def write_full_file(repo_path: Path, target_relpath: str, new_content: str) -> N
     full-file text, which no real model's response (as the prompt actually
     instructs it to respond) could ever satisfy, since `git apply` requires
     unified-diff syntax the model was never asked to produce.
+
+    For .py targets, rejects a patch that doesn't even parse before it's
+    ever written to disk (mirrors evaluation/patcher.py::_validate's
+    ast.parse check) — this is the live agent's only syntax-validity gate:
+    the sandboxed test-suite re-run (agent/sandbox/manager.py) returns True
+    unconditionally when the target repo has no discoverable test suite, so
+    without this check a repo with no tests would get zero validation of
+    any kind before a syntactically broken patch reaches a PR.
     """
     if not target_relpath:
         raise CommitError("empty target file path")
-    if not new_content.strip():
+
+    # Check blankness on the FENCE-STRIPPED content, not the raw response: a
+    # degenerate fenced reply like "```python\n\n```" is non-blank raw text
+    # (the backticks alone are non-whitespace) but strips down to "" — a
+    # blank-content check against new_content misses this case entirely,
+    # silently overwriting the target with an empty file (ast.parse("") is
+    # valid Python, so the .py syntax gate below doesn't catch it either).
+    stripped = _strip_fences(new_content)
+    if not stripped.strip():
         raise CommitError("empty fix content")
 
     repo_root = repo_path.resolve()
@@ -117,7 +134,15 @@ def write_full_file(repo_path: Path, target_relpath: str, new_content: str) -> N
     if not target.exists():
         raise CommitError(f"target file not found in repo: {target_relpath}")
 
-    target.write_text(_strip_fences(new_content), encoding="utf-8")
+    if target.suffix.lower() == ".py":
+        try:
+            ast.parse(stripped)
+        except SyntaxError as exc:
+            raise CommitError(
+                f"fix does not parse as valid Python: {exc.msg} (line {exc.lineno})"
+            ) from exc
+
+    target.write_text(stripped, encoding="utf-8")
 
 
 def commit_all(repo_path: Path, message: str) -> str:

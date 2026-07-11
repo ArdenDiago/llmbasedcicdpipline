@@ -22,9 +22,16 @@ JSON output for the LLM layer to analyze.
 2. Run each scanner in parallel (subprocess)
 3. Parse each scanner's JSON output
 4. Normalize into unified finding format
-5. Deduplicate findings across scanners
-6. Assign severity (critical/high/medium/low/info)
-7. Return unified JSON
+5. Relativize any absolute "file" path against target_path (some scanners,
+   confirmed for bandit, report the path exactly as resolved from their
+   `-r`/scan-root argument — when that argument is itself absolute, as it
+   always is in the live sandbox (`/workspace`), the reported path is
+   absolute too; every downstream consumer joins this field onto a
+   *different* repo_path, so it must be relative by the time it leaves
+   run_scan.py — see `_relativize_findings` in run_scan.py)
+6. Deduplicate findings across scanners
+7. Assign severity (critical/high/medium/low/info)
+8. Return unified JSON
 
 ## Unified Finding Format (JSON)
 ```json

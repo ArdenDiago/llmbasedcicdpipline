@@ -18,6 +18,7 @@ from .llm import analyzer
 from .llm.config import BalancingConfig
 from .llm.prompts import render as render_prompt
 from .pr import creator, github_api
+from .sandbox.container import REPO_BIND_PATH
 from .security.normalize import severity_rank
 
 logger = logging.getLogger(__name__)
@@ -44,7 +45,24 @@ class PipelineResult:
 
 
 def default_file_reader(repo_path: Path, rel: str) -> str:
-    return (repo_path / rel).read_text(encoding="utf-8", errors="replace")
+    """Scanners run inside the sandbox container, where the checkout is
+    bind-mounted read-only at REPO_BIND_PATH ("/workspace") — see
+    container.py — so every finding's "file" field is an absolute path
+    under that mount, not a path relative to repo_path (the *host*
+    directory clone.py created, which has a different, per-run name).
+    `repo_path / rel` silently discards repo_path for an absolute rel
+    (pathlib join semantics), so without stripping the mount prefix first,
+    this would try to read "/workspace/..." on the host — which doesn't
+    exist there — and every real finding would fail closed as a silent
+    "read error" skip. evaluation/scan.py's _relativize() hits the same
+    absolute-path issue for its own (offline, non-live) purposes."""
+    rel_path = Path(rel)
+    if rel_path.is_absolute():
+        try:
+            rel_path = rel_path.relative_to(REPO_BIND_PATH)
+        except ValueError:
+            pass
+    return (repo_path / rel_path).read_text(encoding="utf-8", errors="replace")
 
 
 def default_pr_body(
@@ -134,22 +152,39 @@ def run(
 
         result.processed += 1
 
-        fix = analyzer.analyze_finding(
-            finding=finding,
-            file_contents=file_contents,
-            repo_full_name=repo_full_name,
-            commit_sha=commit_sha,
-            clients=clients,
-            config=config,
-        )
-
-        if fix.error or not fix.fixed_content.strip():
-            result.skipped.append(
-                {"finding": finding, "reason": fix.error or "no fix content"}
+        # analyze_finding() and pr_body_fn() both do real LLM I/O (Ollama,
+        # Haiku/Sonnet/Opus) against a shared client set used across every
+        # finding in this loop — one finding's transient failure (a timeout,
+        # an unreachable Ollama host, a malformed API response) must not
+        # abort processing of the rest of the batch, matching the same
+        # isolation create_pr() already gets below.
+        try:
+            fix = analyzer.analyze_finding(
+                finding=finding,
+                file_contents=file_contents,
+                repo_full_name=repo_full_name,
+                commit_sha=commit_sha,
+                clients=clients,
+                config=config,
             )
+
+            if fix.error or not fix.fixed_content.strip():
+                # fix.rationale carries a more specific reason than the
+                # generic fallback (e.g. "classified as spurious") when a
+                # tier stopped without an actual error — surface it so
+                # PipelineResult.skipped distinguishes "not a real issue"
+                # from "the model returned empty text."
+                result.skipped.append(
+                    {"finding": finding, "reason": fix.error or fix.rationale or "no fix content"}
+                )
+                continue
+
+            body = pr_body_fn(finding, fix)
+        except Exception as exc:
+            logger.warning("skip finding: analysis failed: %s", exc)
+            result.skipped.append({"finding": finding, "reason": f"analysis error: {exc}"})
             continue
 
-        body = pr_body_fn(finding, fix)
         req = creator.PRRequest(
             finding=finding,
             fixed_content=fix.fixed_content,
@@ -167,6 +202,15 @@ def run(
         # processing of the rest of the batch.
         try:
             result.created.append(creator.create_pr(req, validate=validate, client=github_client))
+        except creator.committer.BranchAlreadyExistsError:
+            # Branch names are deterministic (brancher.branch_name() hashes
+            # file+line+commit_sha), so a webhook retry or manager restart
+            # reproducing this exact finding pushes to a branch that already
+            # exists — that almost certainly means a PR for it was already
+            # opened, not a real failure, so this gets a clearer skip reason
+            # than the generic git-error branch below.
+            logger.info("skip finding: branch already exists, PR likely already open")
+            result.skipped.append({"finding": finding, "reason": "pr likely already exists"})
         except Exception as exc:
             logger.warning("skip finding: create_pr failed: %s", exc)
             result.skipped.append({"finding": finding, "reason": f"create_pr error: {exc}"})

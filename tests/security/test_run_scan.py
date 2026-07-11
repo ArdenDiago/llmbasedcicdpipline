@@ -43,6 +43,45 @@ def test_run_all_merges_and_dedupes_findings(tmp_path):
     assert any("eval" in rid for rid in rule_ids)
 
 
+def test_run_all_relativizes_absolute_paths_scanners_report(tmp_path):
+    """Regression test: scanners that receive an absolute target_path on
+    their command line (e.g. the sandbox container's /workspace bind mount
+    — confirmed empirically for bandit, which reports filenames exactly as
+    resolved from the `-r` argument it was given) return absolute "file"
+    paths, not paths relative to target_path. Every downstream consumer
+    (pipeline.default_file_reader, committer.write_full_file) silently
+    breaks on an absolute path because `repo_path / absolute_rel` discards
+    repo_path (pathlib join semantics) — so run_all() must relativize
+    before returning, matching security/CLAUDE.md's documented "file":
+    "app/auth.py" (relative) contract."""
+    absolute_finding_path = str(tmp_path / "app" / "auth.py")
+    bandit_stdout = json.dumps({
+        "results": [{
+            "filename": absolute_finding_path,
+            "line_number": 12,
+            "test_id": "B105",
+            "issue_severity": "HIGH",
+            "issue_confidence": "HIGH",
+            "issue_text": "hardcoded password",
+            "issue_cwe": {"id": 259},
+            "code": "password = 'x'",
+        }],
+        "errors": [],
+    })
+
+    def fake_run(cmd, **kwargs):
+        if cmd[0] == "bandit":
+            return _fake_proc(bandit_stdout, returncode=1)
+        return _fake_proc("{}")
+
+    with patch("subprocess.run", side_effect=fake_run):
+        result = run_scan.run_all(
+            str(tmp_path), enabled=["bandit"], per_scanner_timeout=5, total_timeout=10
+        )
+
+    assert result["findings"][0]["file"] == str(Path("app") / "auth.py")
+
+
 def test_run_all_records_error_when_binary_missing(tmp_path):
     def fake_run(cmd, **kwargs):
         raise FileNotFoundError(cmd[0])

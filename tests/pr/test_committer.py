@@ -81,6 +81,22 @@ def test_write_full_file_rejects_empty_content(repo: Path):
         committer.write_full_file(repo, "a.txt", "   \n")
 
 
+def test_write_full_file_rejects_content_that_is_blank_only_after_fence_stripping(repo: Path):
+    """Regression test: a degenerate fenced response like '```python\\n\\n```'
+    is non-blank as raw text (the backticks alone are non-whitespace), so a
+    blank check against the RAW response before fence-stripping misses this
+    case entirely. _strip_fences() reduces it to "", and ast.parse("") is
+    valid Python (an empty module), so the .py syntax gate doesn't catch it
+    either — without this check, the target file gets silently overwritten
+    to empty with no exception raised at all."""
+    with pytest.raises(committer.CommitError, match="empty fix content"):
+        committer.write_full_file(repo, "a.txt", "```python\n\n```")
+    with pytest.raises(committer.CommitError, match="empty fix content"):
+        committer.write_full_file(repo, "a.txt", "```python\n   \n```")
+    # the original content must survive — never silently emptied
+    assert (repo / "a.txt").read_text() == "hello\n"
+
+
 def test_write_full_file_rejects_empty_target_path(repo: Path):
     with pytest.raises(committer.CommitError):
         committer.write_full_file(repo, "", "hello world\n")
@@ -124,6 +140,35 @@ def test_write_full_file_strips_code_fence(repo: Path):
     fenced = "```python\nhello world\n```"
     committer.write_full_file(repo, "a.txt", fenced)
     assert (repo / "a.txt").read_text() == "hello world"
+
+
+def test_write_full_file_rejects_invalid_python_syntax(repo: Path):
+    """Regression test: the live agent's PR gate re-runs only the target
+    repo's own test suite, which returns pass unconditionally when no test
+    suite is discoverable (agent/sandbox/manager.py's
+    _is_no_test_suite_error branch) — so without this check, a repo with no
+    tests would get zero validation of any kind before a syntactically
+    broken .py fix reached a PR. Mirrors evaluation/patcher.py::_validate's
+    ast.parse check, applied at the point the fix is actually written."""
+    (repo / "broken.py").write_text("def f(:\n")
+    committer.create_branch(repo, "fix/bad-syntax")
+    with pytest.raises(committer.CommitError, match="does not parse"):
+        committer.write_full_file(repo, "broken.py", "def f(:\n    pass\n")
+
+
+def test_write_full_file_accepts_valid_python_syntax(repo: Path):
+    (repo / "ok.py").write_text("def f():\n    return 1\n")
+    committer.create_branch(repo, "fix/good-syntax")
+    committer.write_full_file(repo, "ok.py", "def f():\n    return 2\n")
+    assert "return 2" in (repo / "ok.py").read_text()
+
+
+def test_write_full_file_does_not_syntax_check_non_python_targets(repo: Path):
+    """Only .py targets get the ast.parse gate — matching the paper's and
+    evaluation/patcher.py's scope (Python-only static syntax check)."""
+    committer.create_branch(repo, "fix/txt-target")
+    committer.write_full_file(repo, "a.txt", "this is not python at all (((\n")
+    assert "not python" in (repo / "a.txt").read_text()
 
 
 def test_write_full_file_rejects_missing_target(repo: Path):
