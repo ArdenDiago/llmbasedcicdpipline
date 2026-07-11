@@ -28,3 +28,7 @@ pytest-json-report==1.5.0  # required by agent/testing/runner.py's --json-report
 # Evaluation
 pandas==2.2.3
 matplotlib==3.10.0
+njsscan==0.4.3  # evaluation/run_extended_scan.py baseline; pinned to match the
+                # version cited in Paper/paper/sections/05_results.tex — previously
+                # not pinned anywhere, so a fresh install could silently diverge
+                # from the reported JS-scanner results with no record of it.

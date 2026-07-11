@@ -26,8 +26,12 @@ RUN trivy image --download-db-only --cache-dir /opt/trivy-cache \
 RUN curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz \
     | tar -xz -C /usr/local/bin gitleaks
 
-# Install Semgrep
-RUN pip install --no-cache-dir semgrep
+# Install Semgrep, pinned to match the version cited in the paper
+# (Paper/paper/sections/05_results.tex: "Semgrep~v1.86.0") — unlike
+# Bandit (pinned in requirements.txt) and Trivy/Gitleaks (pinned above),
+# this was previously unpinned, so a rebuild months later could silently
+# diverge from the reported results without any record of it.
+RUN pip install --no-cache-dir semgrep==1.86.0
 
 # Pre-fetch the same registry rulesets the evaluation harness uses
 # (evaluation/run_scanners.py) into a fixed, world-readable path, so the
