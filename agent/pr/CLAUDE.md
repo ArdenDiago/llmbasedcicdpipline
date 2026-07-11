@@ -68,8 +68,14 @@ fails a credential prompt for any repo requiring write access — which is
 every real one — and since `pipeline.run()` catches this per finding, it
 silently degrades to "0 PRs created" with no crash, not a loud failure.
 The token is scrubbed from any log line or raised exception message
-(`committer._run`'s `redact` param), since git echoes a failed URL,
-credentials included, back into stderr on an auth error.
+(`committer._run`'s `redact` param) — the exception message embeds the
+full command argv verbatim, so that alone needs scrubbing regardless of
+git's own stderr behavior. `push()` also deliberately never passes
+`-u`/`--set-upstream`: on a *successful* push (which `redact` doesn't
+touch, since it only fires on a raised exception), `-u` writes the
+literal destination URL — credentials included — into `.git/config`,
+which sits in a directory `clone.py` deliberately makes world-readable
+(0o755) for the sandbox's unprivileged UID.
 
 ## Syntax validity gate
 `committer.write_full_file()` runs `ast.parse()` on `.py` targets before

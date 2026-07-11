@@ -84,11 +84,12 @@ def test_push_falls_back_to_plain_remote_without_token(repo: Path, monkeypatch):
 
 
 def test_push_redacts_token_from_failure_message(repo: Path, monkeypatch):
-    """git itself echoes a failed URL verbatim into stderr on an auth
-    error — credentials included — so scrubbing only the command display
-    isn't enough; the raised exception's message must not leak the token
-    either, since it propagates into pipeline.run()'s skip reason and
-    from there into the /dispatch HTTP response and logs."""
+    """The raised CommitError's message embeds the full command argv
+    verbatim (destination URL included), and separately git's own stderr
+    can echo it back too on some transports/versions — either way, the
+    exception must not leak the token, since it propagates into
+    pipeline.run()'s skip reason and from there into the /dispatch HTTP
+    response and logs."""
     committer.create_branch(repo, "fix/leak-test")
     token = "ghp_secrettoken123"
 
@@ -157,6 +158,58 @@ def test_push_raises_branch_already_exists_on_non_fast_forward(tmp_path: Path):
 
     with pytest.raises(committer.BranchAlreadyExistsError):
         committer.push(repo, "fix/dup")
+
+
+def test_push_does_not_leak_token_into_git_config_on_success(tmp_path: Path):
+    """Regression test: a real (non-mocked) git push. Before this fix,
+    `push()` passed `-u`/`--set-upstream` to `git push`, which on a
+    SUCCESSFUL push writes the literal destination URL — credentials
+    included — into .git/config as branch.<name>.remote. That write
+    happens regardless of exit code, so the failure-path token
+    redaction (_run's `redact=`) never touches it. The clone directory
+    this .git/config lives in is deliberately made world-readable
+    (clone.py chmod 0o755, needed for the sandbox's unprivileged UID to
+    traverse it) for the lifetime of the /dispatch call — so a real
+    GITHUB_TOKEN would sit there, readable by any local unprivileged
+    process, for as long as that directory exists. Verified here against
+    a real local git remote, not a mock, since this class of bug only
+    shows up in git's actual on-disk config-writing behavior."""
+    import subprocess
+
+    remote_dir = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(remote_dir)], check=True)
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    for args in (
+        ["init", "-q", "-b", "main"],
+        ["config", "user.email", "t@t"],
+        ["config", "user.name", "t"],
+    ):
+        subprocess.run(["git", *args], cwd=repo, check=True)
+    (repo / "a.txt").write_text("hello\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
+
+    committer.create_branch(repo, "fix/leak-check")
+    (repo / "a.txt").write_text("changed\n")
+    committer.commit_all(repo, "change")
+
+    # A real, local successful push (no `github_token`/`repo_full_name`,
+    # exercising the same _run(["git", "push", destination, branch], ...)
+    # call every push takes — the property under test, that `-u` is never
+    # passed, holds regardless of whether `destination` came from `remote`
+    # or a built token URL, since the earlier tests in this file already
+    # cover that URL-construction logic separately via mocks).
+    committer.push(repo, "fix/leak-check", remote=str(remote_dir))
+
+    config_text = (repo / ".git" / "config").read_text()
+    assert "[branch" not in config_text, (
+        "git push -u writes branch.<name>.remote = <destination-url> into "
+        ".git/config on success — a real token-bearing destination would "
+        "leak here, into a directory clone.py deliberately makes "
+        "world-readable"
+    )
 
 
 def test_write_full_file_rejects_empty_content(repo: Path):

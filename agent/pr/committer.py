@@ -62,9 +62,13 @@ class CommitResult:
 def _run(cmd: list[str], cwd: Path, redact: str | None = None) -> str:
     """redact: a secret substring (e.g. an access token embedded in a push
     URL) to scrub from any log line or exception message this call might
-    produce. git itself echoes a failed URL verbatim into stderr on an
-    auth error, credentials included, so scrubbing only the argv display
-    isn't enough — stderr needs the same treatment."""
+    produce. The failure-path CommitError message embeds the full argv
+    (including any token-bearing destination) verbatim, so that alone
+    needs scrubbing; stderr is scrubbed too as defense in depth (verified
+    empirically that git 2.55.0 does *not* echo the credential portion of
+    a failed URL back into stderr for a DNS or auth failure, but this is
+    transport/version-dependent and not a property we want this code to
+    depend on staying true)."""
     def _scrub(s: str) -> str:
         return s.replace(redact, "***REDACTED***") if redact else s
 
@@ -186,8 +190,19 @@ def push(
     When both github_token and repo_full_name are given, pushes to an
     inline token-authenticated URL instead of the bare `remote` name; the
     token is scrubbed from any log line or exception message this raises
-    (see _run's `redact` — git itself echoes a failed URL, credentials
-    included, into stderr on an auth error).
+    (see _run's `redact`). Deliberately does NOT pass
+    `-u`/`--set-upstream`: on a SUCCESSFUL push (unlike the failure path
+    above), `-u` writes the literal destination URL — credentials
+    included — into `.git/config` as `branch.<name>.remote`, a write
+    `redact` can't reach since it only fires on a non-zero exit. That
+    config file lives inside a directory clone.py deliberately makes
+    world-readable (0o755, so the sandbox container's unprivileged UID
+    can traverse it) for the lifetime of the /dispatch call, so any local
+    unprivileged process could read a live GITHUB_TOKEN out of it. No
+    branch-tracking metadata is needed here: repo_path is deleted right
+    after this pipeline run, and nothing downstream reads local git
+    tracking state — only the GitHub REST API (github_api.py) and the
+    finding's branch name (a value already known to the caller).
     """
     if branch in PROTECTED_BRANCHES:
         raise CommitError(f"refusing to push to protected branch: {branch}")
@@ -195,7 +210,7 @@ def push(
     if github_token and repo_full_name:
         destination = f"https://x-access-token:{github_token}@github.com/{repo_full_name}.git"
     try:
-        _run(["git", "push", "-u", destination, branch], repo_path, redact=github_token)
+        _run(["git", "push", destination, branch], repo_path, redact=github_token)
     except CommitError as exc:
         if any(marker in str(exc).lower() for marker in _NON_FAST_FORWARD_MARKERS):
             raise BranchAlreadyExistsError(str(exc)) from exc
