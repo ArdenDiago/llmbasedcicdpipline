@@ -6,6 +6,7 @@ against the patched clone; a failing suite aborts PR creation.
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -102,7 +103,15 @@ def create_pr(
 
     message = committer.commit_message(req.finding, req.confidence, req.model_used)
     committer.commit_all(req.repo_path, message)
-    committer.push(req.repo_path, branch)
+    # Same env var github_api.default_client() reads for the PyGithub REST
+    # call below — a repo cloned anonymously (clone.py) needs this to
+    # authenticate the push itself, which is a separate credential need
+    # from the API call that opens the PR.
+    committer.push(
+        req.repo_path, branch,
+        github_token=os.environ.get("GITHUB_TOKEN"),
+        repo_full_name=req.repo_full_name,
+    )
 
     gh = client or github_api.default_client()
     pr = github_api.create_pull_request(

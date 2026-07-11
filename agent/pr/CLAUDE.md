@@ -55,6 +55,22 @@ committing, and PR body generation.
 - One PR per finding — do not batch unrelated fixes
 - GITHUB_TOKEN must have repo and pull_request scopes
 
+## Push authentication
+`clone.py` checks out the target repo anonymously via its public HTTPS
+`clone_url` — no credential is ever passed to `git clone`. `GITHUB_TOKEN`
+is therefore needed a second time, separately from the PyGitHub REST call
+that opens the PR: `committer.push()` builds an inline
+`https://x-access-token:<token>@github.com/<repo_full_name>.git` push
+destination when both are supplied (`creator.create_pr()` reads
+`GITHUB_TOKEN` from the environment for this, same source as
+`github_api.default_client()`). Without this, `git push origin <branch>`
+fails a credential prompt for any repo requiring write access — which is
+every real one — and since `pipeline.run()` catches this per finding, it
+silently degrades to "0 PRs created" with no crash, not a loud failure.
+The token is scrubbed from any log line or raised exception message
+(`committer._run`'s `redact` param), since git echoes a failed URL,
+credentials included, back into stderr on an auth error.
+
 ## Syntax validity gate
 `committer.write_full_file()` runs `ast.parse()` on `.py` targets before
 writing, raising `CommitError` if the fix doesn't even parse. This is not

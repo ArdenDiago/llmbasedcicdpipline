@@ -33,6 +33,89 @@ def test_push_rejects_master(repo: Path):
         committer.push(repo, "master")
 
 
+def test_push_uses_token_authenticated_url_when_given(repo: Path, monkeypatch):
+    """Regression test: clone.py checks out the repo anonymously (no
+    credential passed to `git clone`), and GITHUB_TOKEN was previously
+    read only inside github_api.py for the PyGithub REST call that opens
+    the PR — never used to authenticate this push. `git push origin
+    <branch>` against an anonymous origin always failed with a credential
+    prompt for any repo requiring write access (i.e. every real one), and
+    because pipeline.run() catches this per finding, it surfaced only as
+    a swallowed skip reason rather than a crash — the pipeline looked
+    like it "worked" while never actually opening a single real PR."""
+    committer.create_branch(repo, "fix/auth-test")
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class _Proc:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+        return _Proc()
+
+    monkeypatch.setattr(committer.subprocess, "run", fake_run)
+    committer.push(
+        repo, "fix/auth-test",
+        github_token="ghp_secrettoken123", repo_full_name="acme/service",
+    )
+
+    push_cmd = calls[-1]
+    assert "https://x-access-token:ghp_secrettoken123@github.com/acme/service.git" in push_cmd
+
+
+def test_push_falls_back_to_plain_remote_without_token(repo: Path, monkeypatch):
+    committer.create_branch(repo, "fix/no-token")
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class _Proc:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+        return _Proc()
+
+    monkeypatch.setattr(committer.subprocess, "run", fake_run)
+    committer.push(repo, "fix/no-token")
+
+    assert "origin" in calls[-1]
+    assert not any("@github.com" in c for c in calls[-1])
+
+
+def test_push_redacts_token_from_failure_message(repo: Path, monkeypatch):
+    """git itself echoes a failed URL verbatim into stderr on an auth
+    error — credentials included — so scrubbing only the command display
+    isn't enough; the raised exception's message must not leak the token
+    either, since it propagates into pipeline.run()'s skip reason and
+    from there into the /dispatch HTTP response and logs."""
+    committer.create_branch(repo, "fix/leak-test")
+    token = "ghp_secrettoken123"
+
+    def fake_run(cmd, **kwargs):
+        class _Proc:
+            returncode = 128
+            stdout = ""
+            stderr = (
+                f"fatal: unable to access "
+                f"'https://x-access-token:{token}@github.com/acme/service.git/': "
+                f"The requested URL returned error: 403"
+            )
+        return _Proc()
+
+    monkeypatch.setattr(committer.subprocess, "run", fake_run)
+
+    with pytest.raises(committer.CommitError) as exc_info:
+        committer.push(
+            repo, "fix/leak-test",
+            github_token=token, repo_full_name="acme/service",
+        )
+
+    message = str(exc_info.value)
+    assert token not in message
+    assert "REDACTED" in message
+
+
 def test_push_raises_branch_already_exists_on_non_fast_forward(tmp_path: Path):
     """Regression test: branch names are deterministic (brancher.branch_name
     hashes file+line+commit_sha), so re-processing the same commit (webhook

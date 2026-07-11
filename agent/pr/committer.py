@@ -59,8 +59,16 @@ class CommitResult:
     pushed: bool
 
 
-def _run(cmd: list[str], cwd: Path) -> str:
-    logger.debug("git %s", " ".join(cmd[1:]))
+def _run(cmd: list[str], cwd: Path, redact: str | None = None) -> str:
+    """redact: a secret substring (e.g. an access token embedded in a push
+    URL) to scrub from any log line or exception message this call might
+    produce. git itself echoes a failed URL verbatim into stderr on an
+    auth error, credentials included, so scrubbing only the argv display
+    isn't enough — stderr needs the same treatment."""
+    def _scrub(s: str) -> str:
+        return s.replace(redact, "***REDACTED***") if redact else s
+
+    logger.debug("git %s", " ".join(_scrub(c) for c in cmd[1:]))
     proc = subprocess.run(
         cmd,
         cwd=str(cwd),
@@ -69,8 +77,9 @@ def _run(cmd: list[str], cwd: Path) -> str:
         check=False,
     )
     if proc.returncode != 0:
+        cmd_display = " ".join(_scrub(c) for c in cmd[1:])
         raise CommitError(
-            f"git {' '.join(cmd[1:])} failed ({proc.returncode}): {proc.stderr.strip()}"
+            f"git {cmd_display} failed ({proc.returncode}): {_scrub(proc.stderr.strip())}"
         )
     return proc.stdout.strip()
 
@@ -154,11 +163,39 @@ def commit_all(repo_path: Path, message: str) -> str:
 _NON_FAST_FORWARD_MARKERS = ("non-fast-forward", "fetch first", "already exists")
 
 
-def push(repo_path: Path, branch: str, remote: str = "origin") -> None:
+def push(
+    repo_path: Path,
+    branch: str,
+    remote: str = "origin",
+    github_token: str | None = None,
+    repo_full_name: str | None = None,
+) -> None:
+    """Push branch to remote.
+
+    clone.py checks out the repo anonymously via its public HTTPS
+    clone_url — no credential is ever passed to `git clone`. GITHUB_TOKEN
+    was previously read only inside github_api.py, for the PyGithub REST
+    call that opens the PR, and never used to authenticate this push —
+    so `git push origin <branch>` always failed with a credential prompt
+    against any repo requiring write access (i.e. every real one), and
+    because pipeline.run() catches this per-finding, it surfaced only as
+    a swallowed skip reason, never a crash, making the pipeline look like
+    it "worked" (200 OK, findings processed) while never actually opening
+    a single PR against a real repo.
+
+    When both github_token and repo_full_name are given, pushes to an
+    inline token-authenticated URL instead of the bare `remote` name; the
+    token is scrubbed from any log line or exception message this raises
+    (see _run's `redact` — git itself echoes a failed URL, credentials
+    included, into stderr on an auth error).
+    """
     if branch in PROTECTED_BRANCHES:
         raise CommitError(f"refusing to push to protected branch: {branch}")
+    destination = remote
+    if github_token and repo_full_name:
+        destination = f"https://x-access-token:{github_token}@github.com/{repo_full_name}.git"
     try:
-        _run(["git", "push", "-u", remote, branch], repo_path)
+        _run(["git", "push", "-u", destination, branch], repo_path, redact=github_token)
     except CommitError as exc:
         if any(marker in str(exc).lower() for marker in _NON_FAST_FORWARD_MARKERS):
             raise BranchAlreadyExistsError(str(exc)) from exc
