@@ -6,7 +6,9 @@ main/master — caller must pass the feature branch name.
 from __future__ import annotations
 
 import ast
+import base64
 import logging
+import os
 import re
 import subprocess
 from dataclasses import dataclass
@@ -35,6 +37,16 @@ def _strip_fences(text: str) -> str:
 
 PROTECTED_BRANCHES = frozenset({"main", "master"})
 
+# Local git operations (checkout/reset/clean/add/commit/rev-parse) touch
+# only the on-disk clone, no network — 30s is generous headroom. push() is
+# the one network-bound operation here and gets its own, longer default;
+# both exist because, unlike clone.py's clone_repo() (which already timed
+# out via subprocess.run's timeout=), _run() previously had no timeout at
+# all, so a stalled push (or any other git subprocess) could block the
+# host control-plane process indefinitely.
+DEFAULT_TIMEOUT_SECONDS = 30
+DEFAULT_PUSH_TIMEOUT_SECONDS = 60
+
 
 class CommitError(RuntimeError):
     pass
@@ -59,7 +71,13 @@ class CommitResult:
     pushed: bool
 
 
-def _run(cmd: list[str], cwd: Path, redact: str | None = None) -> str:
+def _run(
+    cmd: list[str],
+    cwd: Path,
+    redact: str | None = None,
+    extra_env: dict[str, str] | None = None,
+    timeout: int = DEFAULT_TIMEOUT_SECONDS,
+) -> str:
     """redact: a secret substring (e.g. an access token embedded in a push
     URL) to scrub from any log line or exception message this call might
     produce. The failure-path CommitError message embeds the full argv
@@ -68,18 +86,38 @@ def _run(cmd: list[str], cwd: Path, redact: str | None = None) -> str:
     empirically that git 2.55.0 does *not* echo the credential portion of
     a failed URL back into stderr for a DNS or auth failure, but this is
     transport/version-dependent and not a property we want this code to
-    depend on staying true)."""
+    depend on staying true).
+
+    extra_env: additional environment variables merged over the current
+    process's environment for this call only — used by push() to inject
+    credentials via git's env-based config mechanism instead of argv.
+    Unlike argv (visible to any local process via `ps`/`/proc/<pid>/cmdline`,
+    which is world-readable, 0444, regardless of owning UID), a child
+    process's environment block is only readable by the same UID (or
+    root/CAP_SYS_PTRACE) via /proc/<pid>/environ.
+
+    timeout: unlike clone.py's clone_repo() (which already bounded its
+    subprocess calls), this function previously had no timeout at all —
+    a stalled network push, or any other hung git subprocess, could block
+    the host control-plane process indefinitely."""
     def _scrub(s: str) -> str:
         return s.replace(redact, "***REDACTED***") if redact else s
 
     logger.debug("git %s", " ".join(_scrub(c) for c in cmd[1:]))
-    proc = subprocess.run(
-        cmd,
-        cwd=str(cwd),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    env = {**os.environ, **extra_env} if extra_env else None
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        cmd_display = " ".join(_scrub(c) for c in cmd[1:])
+        raise CommitError(f"git {cmd_display} timed out after {timeout}s") from exc
     if proc.returncode != 0:
         cmd_display = " ".join(_scrub(c) for c in cmd[1:])
         raise CommitError(
@@ -187,30 +225,43 @@ def push(
     it "worked" (200 OK, findings processed) while never actually opening
     a single PR against a real repo.
 
-    When both github_token and repo_full_name are given, pushes to an
-    inline token-authenticated URL instead of the bare `remote` name; the
-    token is scrubbed from any log line or exception message this raises
-    (see _run's `redact`). Deliberately does NOT pass
-    `-u`/`--set-upstream`: on a SUCCESSFUL push (unlike the failure path
-    above), `-u` writes the literal destination URL — credentials
-    included — into `.git/config` as `branch.<name>.remote`, a write
-    `redact` can't reach since it only fires on a non-zero exit. That
-    config file lives inside a directory clone.py deliberately makes
-    world-readable (0o755, so the sandbox container's unprivileged UID
-    can traverse it) for the lifetime of the /dispatch call, so any local
-    unprivileged process could read a live GITHUB_TOKEN out of it. No
-    branch-tracking metadata is needed here: repo_path is deleted right
-    after this pipeline run, and nothing downstream reads local git
-    tracking state — only the GitHub REST API (github_api.py) and the
-    finding's branch name (a value already known to the caller).
+    When both github_token and repo_full_name are given, authenticates via
+    an `Authorization` header injected through git's env-based config
+    mechanism (`GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n`,
+    git >= 2.31), not a token embedded in the destination URL. Two prior
+    fixes here both still leaked the token through different channels:
+    embedding it in the URL argv leaks it to any local process via `ps`
+    or the world-readable (0444, any UID) `/proc/<pid>/cmdline`; adding
+    `-u`/`--set-upstream` on top of that also wrote the credential-bearing
+    URL into `.git/config` (a file inside a directory clone.py deliberately
+    makes world-readable, 0o755, for the sandbox's unprivileged UID) on a
+    SUCCESSFUL push, a write the failure-path `redact` never reaches. A
+    child process's environment block, by contrast, is only readable by
+    the same UID (or root/CAP_SYS_PTRACE) via `/proc/<pid>/environ` — so
+    passing the token there instead closes both leak paths. Also
+    deliberately does NOT pass `-u`/`--set-upstream`: no branch-tracking
+    metadata is needed here, since repo_path is deleted right after this
+    pipeline run and nothing downstream reads local git tracking state —
+    only the GitHub REST API (github_api.py) and the finding's branch
+    name (a value already known to the caller).
     """
     if branch in PROTECTED_BRANCHES:
         raise CommitError(f"refusing to push to protected branch: {branch}")
     destination = remote
+    extra_env = None
     if github_token and repo_full_name:
-        destination = f"https://x-access-token:{github_token}@github.com/{repo_full_name}.git"
+        destination = f"https://github.com/{repo_full_name}.git"
+        basic = base64.b64encode(f"x-access-token:{github_token}".encode()).decode()
+        extra_env = {
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "http.extraheader",
+            "GIT_CONFIG_VALUE_0": f"Authorization: basic {basic}",
+        }
     try:
-        _run(["git", "push", destination, branch], repo_path, redact=github_token)
+        _run(
+            ["git", "push", destination, branch], repo_path,
+            redact=github_token, extra_env=extra_env, timeout=DEFAULT_PUSH_TIMEOUT_SECONDS,
+        )
     except CommitError as exc:
         if any(marker in str(exc).lower() for marker in _NON_FAST_FORWARD_MARKERS):
             raise BranchAlreadyExistsError(str(exc)) from exc

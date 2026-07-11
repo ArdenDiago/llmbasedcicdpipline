@@ -33,21 +33,44 @@ def test_push_rejects_master(repo: Path):
         committer.push(repo, "master")
 
 
-def test_push_uses_token_authenticated_url_when_given(repo: Path, monkeypatch):
-    """Regression test: clone.py checks out the repo anonymously (no
-    credential passed to `git clone`), and GITHUB_TOKEN was previously
-    read only inside github_api.py for the PyGithub REST call that opens
-    the PR — never used to authenticate this push. `git push origin
-    <branch>` against an anonymous origin always failed with a credential
-    prompt for any repo requiring write access (i.e. every real one), and
-    because pipeline.run() catches this per finding, it surfaced only as
-    a swallowed skip reason rather than a crash — the pipeline looked
-    like it "worked" while never actually opening a single real PR."""
+def test_run_raises_commit_error_on_timeout(repo: Path, monkeypatch):
+    """Regression test: unlike clone.py's clone_repo() (already bounded),
+    committer._run() previously had no timeout at all — a stalled network
+    push, or any other hung git subprocess, could block the host
+    control-plane process indefinitely instead of failing the one
+    finding it's processing."""
+    def fake_run(cmd, **kwargs):
+        raise committer.subprocess.TimeoutExpired(cmd=cmd, timeout=kwargs.get("timeout"))
+
+    monkeypatch.setattr(committer.subprocess, "run", fake_run)
+
+    with pytest.raises(committer.CommitError, match="timed out"):
+        committer._run(["git", "status"], repo, timeout=5)
+
+
+def test_push_authenticates_via_env_not_argv(repo: Path, monkeypatch):
+    """Regression test, three layers deep:
+    1. clone.py checks out the repo anonymously (no credential passed to
+       `git clone`), and GITHUB_TOKEN was previously read only inside
+       github_api.py for the PyGithub REST call that opens the PR — never
+       used to authenticate this push, so `git push origin <branch>`
+       always failed a credential prompt against any repo requiring write
+       access (i.e. every real one), silently swallowed per-finding by
+       pipeline.run() into a skip reason rather than a crash.
+    2. Embedding the token in the push URL (an earlier fix) put it in
+       subprocess argv, readable by any local process via `ps` or the
+       world-readable (0444, any UID) /proc/<pid>/cmdline.
+    3. So the token must be passed via the environment instead (only
+       readable by the same UID via /proc/<pid>/environ) — using git's
+       env-based config injection (GIT_CONFIG_COUNT/KEY/VALUE) to set an
+       Authorization header, never a URL-embedded credential."""
     committer.create_branch(repo, "fix/auth-test")
     calls = []
+    envs = []
 
     def fake_run(cmd, **kwargs):
         calls.append(cmd)
+        envs.append(kwargs.get("env"))
         class _Proc:
             returncode = 0
             stdout = ""
@@ -61,7 +84,19 @@ def test_push_uses_token_authenticated_url_when_given(repo: Path, monkeypatch):
     )
 
     push_cmd = calls[-1]
-    assert "https://x-access-token:ghp_secrettoken123@github.com/acme/service.git" in push_cmd
+    assert push_cmd == ["git", "push", "https://github.com/acme/service.git", "fix/auth-test"]
+    assert not any("ghp_secrettoken123" in arg for arg in push_cmd)
+
+    push_env = envs[-1]
+    assert push_env["GIT_CONFIG_COUNT"] == "1"
+    assert push_env["GIT_CONFIG_KEY_0"] == "http.extraheader"
+    assert "Authorization: basic" in push_env["GIT_CONFIG_VALUE_0"]
+    # the header value is base64(x-access-token:<token>), not the raw
+    # token, but decoding it back out is exactly what a real HTTP
+    # transport would do — assert the round-trip is correct.
+    import base64
+    encoded = push_env["GIT_CONFIG_VALUE_0"].split("basic ", 1)[1]
+    assert base64.b64decode(encoded).decode() == "x-access-token:ghp_secrettoken123"
 
 
 def test_push_falls_back_to_plain_remote_without_token(repo: Path, monkeypatch):

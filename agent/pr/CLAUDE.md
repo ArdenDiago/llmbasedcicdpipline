@@ -59,23 +59,37 @@ committing, and PR body generation.
 `clone.py` checks out the target repo anonymously via its public HTTPS
 `clone_url` — no credential is ever passed to `git clone`. `GITHUB_TOKEN`
 is therefore needed a second time, separately from the PyGitHub REST call
-that opens the PR: `committer.push()` builds an inline
-`https://x-access-token:<token>@github.com/<repo_full_name>.git` push
-destination when both are supplied (`creator.create_pr()` reads
-`GITHUB_TOKEN` from the environment for this, same source as
-`github_api.default_client()`). Without this, `git push origin <branch>`
-fails a credential prompt for any repo requiring write access — which is
-every real one — and since `pipeline.run()` catches this per finding, it
-silently degrades to "0 PRs created" with no crash, not a loud failure.
-The token is scrubbed from any log line or raised exception message
-(`committer._run`'s `redact` param) — the exception message embeds the
-full command argv verbatim, so that alone needs scrubbing regardless of
-git's own stderr behavior. `push()` also deliberately never passes
-`-u`/`--set-upstream`: on a *successful* push (which `redact` doesn't
-touch, since it only fires on a raised exception), `-u` writes the
-literal destination URL — credentials included — into `.git/config`,
-which sits in a directory `clone.py` deliberately makes world-readable
-(0o755) for the sandbox's unprivileged UID.
+that opens the PR (`creator.create_pr()` reads it from the environment,
+same source as `github_api.default_client()`). Without this, `git push
+origin <branch>` fails a credential prompt for any repo requiring write
+access — which is every real one — and since `pipeline.run()` catches
+this per finding, it silently degrades to "0 PRs created" with no crash,
+not a loud failure.
+
+Two earlier fixes here each closed one leak but opened another, so the
+final approach is worth spelling out. `committer.push()` authenticates
+via an `Authorization` header injected through git's env-based config
+mechanism (`GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n`,
+git ≥ 2.31) — **not** a token embedded in the destination URL:
+- Embedding the token in the URL (an earlier fix) put it in subprocess
+  argv, readable by any local process via `ps` or the world-readable
+  (0444, any UID) `/proc/<pid>/cmdline`.
+- Adding `-u`/`--set-upstream` on top of that (a second earlier fix,
+  meant to authenticate at all) also wrote the credential-bearing URL
+  into `.git/config` — a file inside a directory `clone.py` deliberately
+  makes world-readable (0o755) for the sandbox's unprivileged UID — on
+  a *successful* push, a write the failure-path token redaction never
+  reaches (it only fires on a raised exception).
+- A child process's environment block, by contrast, is only readable by
+  the same UID (or root/CAP_SYS_PTRACE) via `/proc/<pid>/environ`, and
+  `push()` no longer passes `-u` at all (branch-tracking metadata isn't
+  needed — `repo_path` is deleted right after the pipeline run).
+
+`committer._run()` also scrubs the token from any log line or raised
+exception message (the `redact` param) as defense in depth, and now
+enforces a timeout (`DEFAULT_TIMEOUT_SECONDS`/`DEFAULT_PUSH_TIMEOUT_SECONDS`)
+on every git subprocess call — previously unbounded, unlike `clone.py`'s
+`clone_repo()`.
 
 ## Syntax validity gate
 `committer.write_full_file()` runs `ast.parse()` on `.py` targets before
