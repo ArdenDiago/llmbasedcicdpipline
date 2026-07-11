@@ -116,8 +116,15 @@ def _run(
             timeout=timeout,
         )
     except subprocess.TimeoutExpired as exc:
+        # `from None`, not `from exc`: TimeoutExpired carries the raw,
+        # unscrubbed argv and any partial captured stderr as attributes
+        # (.cmd, .stderr) — chaining it would attach that unscrubbed state
+        # to this exception's __cause__, bypassing _scrub() if anything
+        # downstream ever formats the full traceback/exception chain
+        # (an unhandled-exception handler, error reporting, etc.), rather
+        # than just this exception's already-scrubbed message.
         cmd_display = " ".join(_scrub(c) for c in cmd[1:])
-        raise CommitError(f"git {cmd_display} timed out after {timeout}s") from exc
+        raise CommitError(f"git {cmd_display} timed out after {timeout}s") from None
     if proc.returncode != 0:
         cmd_display = " ".join(_scrub(c) for c in cmd[1:])
         raise CommitError(
