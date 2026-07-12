@@ -1,0 +1,49 @@
+{
+  "python_vulns": {
+    "n_ground_truth": 23,
+    "agent_union": {
+      "tp": 21,
+      "fp": 10,
+      "fn": 2,
+      "precision": 0.677,
+      "recall": 0.913,
+      "f1": 0.778
+    },
+    "bandit_only": {
+      "tp": 10,
+      "fp": 8,
+      "fn": 13,
+      "precision": 0.556,
+      "recall": 0.435,
+      "f1": 0.488
+    },
+    "semgrep_only": {
+      "tp": 13,
+      "fp": 0,
+      "fn": 10,
+      "precision": 1.0,
+      "recall": 0.565,
+      "f1": 0.722
+    }
+  },
+  "js_vulns": {
+    "n_ground_truth": 12,
+    "agent_union": {
+      "tp": 5,
+      "fp": 1,
+      "fn": 7,
+      "precision": 0.833,
+      "recall": 0.417,
+      "f1": 0.556
+    },
+    "bandit_only": null,
+    "semgrep_only": {
+      "tp": 5,
+      "fp": 1,
+      "fn": 7,
+      "precision": 0.833,
+      "recall": 0.417,
+      "f1": 0.556
+    }
+  }
+}

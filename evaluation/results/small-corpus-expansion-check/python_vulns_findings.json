@@ -1,0 +1,462 @@
+[
+  {
+    "scanner": "semgrep",
+    "rule_id": "cache.semgrep-rules-offline.python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit",
+    "severity": "high",
+    "confidence": "low",
+    "file": "command_injection.py",
+    "line": 7,
+    "message": "Detected subprocess function 'call' without a static string. If this data can be controlled by a malicious actor, it may be an instance of command injection. Audit the use of this call to ensure it is not controllable by an external resource. You may consider using 'shlex.escape()'.",
+    "cwe": "CWE-78",
+    "snippet": "requires login",
+    "extra": {
+      "corroborated_by": [
+        {
+          "scanner": "bandit",
+          "rule_id": "B602",
+          "message": "subprocess call with shell=True identified, security issue."
+        }
+      ]
+    }
+  },
+  {
+    "scanner": "semgrep",
+    "rule_id": "cache.semgrep-rules-offline.python.lang.security.audit.dangerous-system-call-audit.dangerous-system-call-audit",
+    "severity": "high",
+    "confidence": "low",
+    "file": "command_injection.py",
+    "line": 11,
+    "message": "Found dynamic content used in a system call. This is dangerous if external data can reach this function call because it allows a malicious actor to execute commands. Use the 'subprocess' module instead, which is easier to use without accidentally exposing a command injection vulnerability.",
+    "cwe": "CWE-78",
+    "snippet": "requires login",
+    "extra": {
+      "corroborated_by": [
+        {
+          "scanner": "bandit",
+          "rule_id": "B605",
+          "message": "Starting a process with a shell, possible injection detected, security issue."
+        }
+      ]
+    }
+  },
+  {
+    "scanner": "semgrep",
+    "rule_id": "cache.semgrep-rules-offline.python.lang.security.audit.dangerous-system-call-audit.dangerous-system-call-audit",
+    "severity": "high",
+    "confidence": "low",
+    "file": "command_injection2.py",
+    "line": 7,
+    "message": "Found dynamic content used in a system call. This is dangerous if external data can reach this function call because it allows a malicious actor to execute commands. Use the 'subprocess' module instead, which is easier to use without accidentally exposing a command injection vulnerability.",
+    "cwe": "CWE-78",
+    "snippet": "requires login",
+    "extra": {
+      "corroborated_by": [
+        {
+          "scanner": "bandit",
+          "rule_id": "B605",
+          "message": "Starting a process with a shell, possible injection detected, security issue."
+        }
+      ]
+    }
+  },
+  {
+    "scanner": "semgrep",
+    "rule_id": "cache.semgrep-rules-offline.python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit",
+    "severity": "high",
+    "confidence": "low",
+    "file": "command_injection2.py",
+    "line": 11,
+    "message": "Detected subprocess function 'Popen' without a static string. If this data can be controlled by a malicious actor, it may be an instance of command injection. Audit the use of this call to ensure it is not controllable by an external resource. You may consider using 'shlex.escape()'.",
+    "cwe": "CWE-78",
+    "snippet": "requires login",
+    "extra": {
+      "corroborated_by": [
+        {
+          "scanner": "bandit",
+          "rule_id": "B602",
+          "message": "subprocess call with shell=True identified, security issue."
+        }
+      ]
+    }
+  },
+  {
+    "scanner": "semgrep",
+    "rule_id": "cache.semgrep-rules-offline.python.lang.security.deserialization.pickle.avoid-pickle",
+    "severity": "medium",
+    "confidence": "low",
+    "file": "insecure_deserialize.py",
+    "line": 6,
+    "message": "Avoid using `pickle`, which is known to lead to code execution vulnerabilities. When unpickling, the serialized data could be manipulated to run arbitrary code. Instead, consider serializing the relevant data as JSON or a similar text-based serialization format.",
+    "cwe": "CWE-502",
+    "snippet": "requires login",
+    "extra": {
+      "corroborated_by": [
+        {
+          "scanner": "bandit",
+          "rule_id": "B301",
+          "message": "Pickle and modules that wrap it can be unsafe when used to deserialize untrusted data, possible security issue."
+        }
+      ]
+    }
+  },
+  {
+    "scanner": "semgrep",
+    "rule_id": "cache.semgrep-rules-offline.python.lang.security.deserialization.pickle.avoid-pickle",
+    "severity": "medium",
+    "confidence": "low",
+    "file": "insecure_deserialize2.py",
+    "line": 7,
+    "message": "Avoid using `pickle`, which is known to lead to code execution vulnerabilities. When unpickling, the serialized data could be manipulated to run arbitrary code. Instead, consider serializing the relevant data as JSON or a similar text-based serialization format.",
+    "cwe": "CWE-502",
+    "snippet": "requires login",
+    "extra": {
+      "corroborated_by": [
+        {
+          "scanner": "bandit",
+          "rule_id": "B301",
+          "message": "Pickle and modules that wrap it can be unsafe when used to deserialize untrusted data, possible security issue."
+        }
+      ]
+    }
+  },
+  {
+    "scanner": "semgrep",
+    "rule_id": "cache.semgrep-rules-offline.python.lang.security.audit.formatted-sql-query.formatted-sql-query",
+    "severity": "medium",
+    "confidence": "low",
+    "file": "sql_injection.py",
+    "line": 14,
+    "message": "Detected possible formatted SQL query. Use parameterized queries instead.",
+    "cwe": "CWE-89",
+    "snippet": "requires login",
+    "extra": {
+      "corroborated_by": [
+        {
+          "scanner": "bandit",
+          "rule_id": "B608",
+          "message": "Possible SQL injection vector through string-based query construction."
+        }
+      ]
+    }
+  },
+  {
+    "scanner": "semgrep",
+    "rule_id": "cache.semgrep-rules-offline.python.lang.security.audit.formatted-sql-query.formatted-sql-query",
+    "severity": "medium",
+    "confidence": "low",
+    "file": "sql_injection2.py",
+    "line": 8,
+    "message": "Detected possible formatted SQL query. Use parameterized queries instead.",
+    "cwe": "CWE-89",
+    "snippet": "requires login",
+    "extra": {}
+  },
+  {
+    "scanner": "semgrep",
+    "rule_id": "cache.semgrep-rules-offline.python.lang.security.audit.formatted-sql-query.formatted-sql-query",
+    "severity": "medium",
+    "confidence": "low",
+    "file": "sql_injection2.py",
+    "line": 15,
+    "message": "Detected possible formatted SQL query. Use parameterized queries instead.",
+    "cwe": "CWE-89",
+    "snippet": "requires login",
+    "extra": {}
+  },
+  {
+    "scanner": "semgrep",
+    "rule_id": "cache.semgrep-rules-offline.python.lang.security.audit.eval-detected.eval-detected",
+    "severity": "medium",
+    "confidence": "low",
+    "file": "unsafe_eval.py",
+    "line": 5,
+    "message": "Detected the use of eval(). eval() can be dangerous if used to evaluate dynamic content. If this content can be input from outside the program, this may be a code injection vulnerability. Ensure evaluated content is not definable by external sources.",
+    "cwe": "CWE-95",
+    "snippet": "requires login",
+    "extra": {}
+  },
+  {
+    "scanner": "semgrep",
+    "rule_id": "cache.semgrep-rules-offline.python.lang.security.audit.exec-detected.exec-detected",
+    "severity": "medium",
+    "confidence": "low",
+    "file": "unsafe_eval.py",
+    "line": 9,
+    "message": "Detected the use of exec(). exec() can be dangerous if used to evaluate dynamic content. If this content can be input from outside the program, this may be a code injection vulnerability. Ensure evaluated content is not definable by external sources.",
+    "cwe": "CWE-95",
+    "snippet": "requires login",
+    "extra": {}
+  },
+  {
+    "scanner": "semgrep",
+    "rule_id": "cache.semgrep-rules-offline.python.lang.security.audit.exec-detected.exec-detected",
+    "severity": "medium",
+    "confidence": "low",
+    "file": "unsafe_eval2.py",
+    "line": 5,
+    "message": "Detected the use of exec(). exec() can be dangerous if used to evaluate dynamic content. If this content can be input from outside the program, this may be a code injection vulnerability. Ensure evaluated content is not definable by external sources.",
+    "cwe": "CWE-95",
+    "snippet": "requires login",
+    "extra": {}
+  },
+  {
+    "scanner": "semgrep",
+    "rule_id": "cache.semgrep-rules-offline.python.lang.security.audit.eval-detected.eval-detected",
+    "severity": "medium",
+    "confidence": "low",
+    "file": "unsafe_eval2.py",
+    "line": 10,
+    "message": "Detected the use of eval(). eval() can be dangerous if used to evaluate dynamic content. If this content can be input from outside the program, this may be a code injection vulnerability. Ensure evaluated content is not definable by external sources.",
+    "cwe": "CWE-95",
+    "snippet": "requires login",
+    "extra": {}
+  },
+  {
+    "scanner": "bandit",
+    "rule_id": "B324",
+    "severity": "high",
+    "confidence": "high",
+    "file": "weak_crypto.py",
+    "line": 6,
+    "message": "Use of weak MD5 hash for security. Consider usedforsecurity=False",
+    "cwe": "CWE-327",
+    "snippet": "5 def hash_password(password: str) -> str:\n6     return hashlib.md5(password.encode()).hexdigest()\n7 \n",
+    "extra": {
+      "corroborated_by": [
+        {
+          "scanner": "semgrep",
+          "rule_id": "cache.semgrep-rules-offline.python.lang.security.insecure-hash-algorithms-md5.insecure-hash-algorithm-md5",
+          "message": "Detected MD5 hash algorithm which is considered insecure. MD5 is not collision resistant and is therefore not suitable as a cryptographic signature. Use SHA256 or SHA3 instead."
+        }
+      ]
+    }
+  },
+  {
+    "scanner": "bandit",
+    "rule_id": "B324",
+    "severity": "high",
+    "confidence": "high",
+    "file": "weak_crypto.py",
+    "line": 10,
+    "message": "Use of weak SHA1 hash for security. Consider usedforsecurity=False",
+    "cwe": "CWE-327",
+    "snippet": "9 def fingerprint(data: bytes) -> str:\n10     return hashlib.sha1(data).hexdigest()\n",
+    "extra": {
+      "corroborated_by": [
+        {
+          "scanner": "semgrep",
+          "rule_id": "cache.semgrep-rules-offline.python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1",
+          "message": "Detected SHA1 hash algorithm which is considered insecure. SHA1 is not collision resistant and is therefore not suitable as a cryptographic signature. Use SHA256 or SHA3 instead."
+        }
+      ]
+    }
+  },
+  {
+    "scanner": "bandit",
+    "rule_id": "B324",
+    "severity": "high",
+    "confidence": "high",
+    "file": "weak_crypto2.py",
+    "line": 6,
+    "message": "Use of weak MD5 hash for security. Consider usedforsecurity=False",
+    "cwe": "CWE-327",
+    "snippet": "5 def file_checksum(data: bytes) -> str:\n6     return hashlib.md5(data).hexdigest()\n7 \n",
+    "extra": {
+      "corroborated_by": [
+        {
+          "scanner": "semgrep",
+          "rule_id": "cache.semgrep-rules-offline.python.lang.security.insecure-hash-algorithms-md5.insecure-hash-algorithm-md5",
+          "message": "Detected MD5 hash algorithm which is considered insecure. MD5 is not collision resistant and is therefore not suitable as a cryptographic signature. Use SHA256 or SHA3 instead."
+        }
+      ]
+    }
+  },
+  {
+    "scanner": "bandit",
+    "rule_id": "B324",
+    "severity": "high",
+    "confidence": "high",
+    "file": "weak_crypto2.py",
+    "line": 10,
+    "message": "Use of weak SHA1 hash for security. Consider usedforsecurity=False",
+    "cwe": "CWE-327",
+    "snippet": "9 def session_token(user_id: str, secret: str) -> str:\n10     return hashlib.sha1((user_id + secret).encode()).hexdigest()\n",
+    "extra": {
+      "corroborated_by": [
+        {
+          "scanner": "semgrep",
+          "rule_id": "cache.semgrep-rules-offline.python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1",
+          "message": "Detected SHA1 hash algorithm which is considered insecure. SHA1 is not collision resistant and is therefore not suitable as a cryptographic signature. Use SHA256 or SHA3 instead."
+        }
+      ]
+    }
+  },
+  {
+    "scanner": "bandit",
+    "rule_id": "B404",
+    "severity": "low",
+    "confidence": "high",
+    "file": "command_injection.py",
+    "line": 3,
+    "message": "Consider possible security implications associated with the subprocess module.",
+    "cwe": "CWE-78",
+    "snippet": "2 import os\n3 import subprocess\n4 \n",
+    "extra": {}
+  },
+  {
+    "scanner": "bandit",
+    "rule_id": "B404",
+    "severity": "low",
+    "confidence": "high",
+    "file": "command_injection2.py",
+    "line": 3,
+    "message": "Consider possible security implications associated with the subprocess module.",
+    "cwe": "CWE-78",
+    "snippet": "2 import os\n3 import subprocess\n4 \n",
+    "extra": {}
+  },
+  {
+    "scanner": "bandit",
+    "rule_id": "B403",
+    "severity": "low",
+    "confidence": "high",
+    "file": "insecure_deserialize.py",
+    "line": 2,
+    "message": "Consider possible security implications associated with pickle module.",
+    "cwe": "CWE-502",
+    "snippet": "1 \"\"\"Insecure deserialization with pickle on untrusted bytes. CWE-502.\"\"\"\n2 import pickle\n3 \n",
+    "extra": {}
+  },
+  {
+    "scanner": "bandit",
+    "rule_id": "B403",
+    "severity": "low",
+    "confidence": "high",
+    "file": "insecure_deserialize2.py",
+    "line": 2,
+    "message": "Consider possible security implications associated with pickle module.",
+    "cwe": "CWE-502",
+    "snippet": "1 \"\"\"Insecure deserialization via pickle.load on an untrusted file. CWE-502.\"\"\"\n2 import pickle\n3 \n",
+    "extra": {}
+  },
+  {
+    "scanner": "bandit",
+    "rule_id": "B105",
+    "severity": "low",
+    "confidence": "medium",
+    "file": "secrets.py",
+    "line": 3,
+    "message": "Possible hardcoded password: 'SuperSecret123!'",
+    "cwe": "CWE-259",
+    "snippet": "2 \n3 DB_PASSWORD = \"SuperSecret123!\"\n4 \n",
+    "extra": {}
+  },
+  {
+    "scanner": "bandit",
+    "rule_id": "B105",
+    "severity": "low",
+    "confidence": "medium",
+    "file": "secrets.py",
+    "line": 5,
+    "message": "Possible hardcoded password: 'AKIAIOSFODNN7EXAMPLE'",
+    "cwe": "CWE-259",
+    "snippet": "4 \n5 API_TOKEN = \"AKIAIOSFODNN7EXAMPLE\"\n6 \n",
+    "extra": {}
+  },
+  {
+    "scanner": "bandit",
+    "rule_id": "B105",
+    "severity": "low",
+    "confidence": "medium",
+    "file": "secrets.py",
+    "line": 11,
+    "message": "Possible hardcoded password: 'admin123'",
+    "cwe": "CWE-259",
+    "snippet": "10         \"user\": \"admin\",\n11         \"password\": \"admin123\",\n12         \"host\": \"db.internal\",\n13     }\n",
+    "extra": {}
+  },
+  {
+    "scanner": "bandit",
+    "rule_id": "B608",
+    "severity": "medium",
+    "confidence": "low",
+    "file": "sql_injection.py",
+    "line": 7,
+    "message": "Possible SQL injection vector through string-based query construction.",
+    "cwe": "CWE-89",
+    "snippet": "6     cursor = conn.cursor()\n7     query = \"SELECT * FROM users WHERE name = '\" + username + \"'\"\n8     cursor.execute(query)\n",
+    "extra": {}
+  },
+  {
+    "scanner": "bandit",
+    "rule_id": "B608",
+    "severity": "medium",
+    "confidence": "low",
+    "file": "sql_injection2.py",
+    "line": 7,
+    "message": "Possible SQL injection vector through string-based query construction.",
+    "cwe": "CWE-89",
+    "snippet": "6     cursor = conn.cursor()\n7     query = \"SELECT * FROM products WHERE name LIKE '%%%s%%'\" % term\n8     cursor.execute(query)\n",
+    "extra": {}
+  },
+  {
+    "scanner": "bandit",
+    "rule_id": "B608",
+    "severity": "medium",
+    "confidence": "low",
+    "file": "sql_injection2.py",
+    "line": 14,
+    "message": "Possible SQL injection vector through string-based query construction.",
+    "cwe": "CWE-89",
+    "snippet": "13     cursor = conn.cursor()\n14     query = \"SELECT * FROM invoices WHERE id = {}\".format(invoice_id)\n15     cursor.execute(query)\n",
+    "extra": {}
+  },
+  {
+    "scanner": "bandit",
+    "rule_id": "B307",
+    "severity": "medium",
+    "confidence": "high",
+    "file": "unsafe_eval.py",
+    "line": 5,
+    "message": "Use of possibly insecure function - consider using safer ast.literal_eval.",
+    "cwe": "CWE-78",
+    "snippet": "4 def run_expr(expr: str):\n5     return eval(expr)\n6 \n",
+    "extra": {}
+  },
+  {
+    "scanner": "bandit",
+    "rule_id": "B102",
+    "severity": "medium",
+    "confidence": "high",
+    "file": "unsafe_eval.py",
+    "line": 9,
+    "message": "Use of exec detected.",
+    "cwe": "CWE-78",
+    "snippet": "8 def execute_script(code: str):\n9     exec(code)\n",
+    "extra": {}
+  },
+  {
+    "scanner": "bandit",
+    "rule_id": "B102",
+    "severity": "medium",
+    "confidence": "high",
+    "file": "unsafe_eval2.py",
+    "line": 5,
+    "message": "Use of exec detected.",
+    "cwe": "CWE-78",
+    "snippet": "4 def apply_formula(formula: str, context: dict):\n5     exec(compile(formula, \"<formula>\", \"exec\"), context)\n6     return context\n",
+    "extra": {}
+  },
+  {
+    "scanner": "bandit",
+    "rule_id": "B307",
+    "severity": "medium",
+    "confidence": "high",
+    "file": "unsafe_eval2.py",
+    "line": 10,
+    "message": "Use of possibly insecure function - consider using safer ast.literal_eval.",
+    "cwe": "CWE-78",
+    "snippet": "9 def dynamic_filter(predicate: str, item):\n10     return eval(predicate, {\"item\": item})\n",
+    "extra": {}
+  }
+]

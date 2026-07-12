@@ -1,0 +1,74 @@
+[
+  {
+    "scanner": "semgrep",
+    "rule_id": "cache.semgrep-rules-offline.javascript.lang.security.detect-child-process.detect-child-process",
+    "severity": "high",
+    "confidence": "low",
+    "file": "command_exec.js",
+    "line": 6,
+    "message": "Detected calls to child_process from a function argument `req`. This could lead to a command injection if the input is user controllable. Try to avoid calls to child_process, and if it is needed ensure user input is correctly sanitized or sandboxed. ",
+    "cwe": "CWE-78",
+    "snippet": "requires login",
+    "extra": {}
+  },
+  {
+    "scanner": "semgrep",
+    "rule_id": "cache.semgrep-rules-offline.javascript.lang.security.detect-child-process.detect-child-process",
+    "severity": "high",
+    "confidence": "low",
+    "file": "command_exec2.js",
+    "line": 6,
+    "message": "Detected calls to child_process from a function argument `req`. This could lead to a command injection if the input is user controllable. Try to avoid calls to child_process, and if it is needed ensure user input is correctly sanitized or sandboxed. ",
+    "cwe": "CWE-78",
+    "snippet": "requires login",
+    "extra": {}
+  },
+  {
+    "scanner": "semgrep",
+    "rule_id": "cache.semgrep-rules-offline.javascript.express.security.audit.xss.direct-response-write.direct-response-write",
+    "severity": "medium",
+    "confidence": "medium",
+    "file": "command_exec2.js",
+    "line": 7,
+    "message": "Detected directly writing to a Response object from user-defined input. This bypasses any HTML escaping and may expose your application to a Cross-Site-scripting (XSS) vulnerability. Instead, use 'resp.render()' to render safely escaped HTML.",
+    "cwe": "CWE-79",
+    "snippet": "requires login",
+    "extra": {}
+  },
+  {
+    "scanner": "semgrep",
+    "rule_id": "cache.semgrep-rules-offline.javascript.lang.security.audit.code-string-concat.code-string-concat",
+    "severity": "high",
+    "confidence": "high",
+    "file": "eval_use.js",
+    "line": 5,
+    "message": "Found data from an Express or Next web request flowing to `eval`. If this data is user-controllable this can lead to execution of arbitrary system commands in the context of your application process. Avoid `eval` whenever possible.",
+    "cwe": "CWE-95",
+    "snippet": "requires login",
+    "extra": {}
+  },
+  {
+    "scanner": "semgrep",
+    "rule_id": "cache.semgrep-rules-offline.javascript.express.security.injection.tainted-sql-string.tainted-sql-string",
+    "severity": "high",
+    "confidence": "low",
+    "file": "sql_injection.js",
+    "line": 6,
+    "message": "Detected user input used to manually construct a SQL string. This is usually bad practice because manual construction could accidentally result in a SQL injection. An attacker could use a SQL injection to steal or modify contents of the database. Instead, use a parameterized query which is available by default in most database engines. Alternatively, consider using an object-relational mapper (ORM) such as Sequelize which will protect your queries.",
+    "cwe": "CWE-89",
+    "snippet": "requires login",
+    "extra": {}
+  },
+  {
+    "scanner": "semgrep",
+    "rule_id": "cache.semgrep-rules-offline.javascript.express.security.injection.tainted-sql-string.tainted-sql-string",
+    "severity": "high",
+    "confidence": "low",
+    "file": "sql_injection2.js",
+    "line": 6,
+    "message": "Detected user input used to manually construct a SQL string. This is usually bad practice because manual construction could accidentally result in a SQL injection. An attacker could use a SQL injection to steal or modify contents of the database. Instead, use a parameterized query which is available by default in most database engines. Alternatively, consider using an object-relational mapper (ORM) such as Sequelize which will protect your queries.",
+    "cwe": "CWE-89",
+    "snippet": "requires login",
+    "extra": {}
+  }
+]
