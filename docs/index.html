@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LLM-Assisted Vulnerability Detection &amp; Automated Remediation in CI/CD Pipelines</title>
+<meta name="description" content="An autonomous CI/CD agent that detects vulnerabilities and opens fix PRs using a cost-tiered LLM cascade.">
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #fafaf9;
+    --surface: #ffffff;
+    --border: #e5e5e0;
+    --text: #1c1c1a;
+    --text-dim: #57564f;
+    --accent: #0f6e5c;
+    --accent-bg: #e3f3ee;
+    --code-bg: #f1f1ec;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16171a;
+      --surface: #1e2023;
+      --border: #33353a;
+      --text: #eceef0;
+      --text-dim: #a7abb2;
+      --accent: #4fd8b8;
+      --accent-bg: #12312a;
+      --code-bg: #26282c;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.55;
+  }
+  .wrap {
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 48px 20px 80px;
+  }
+  header { margin-bottom: 40px; }
+  .eyebrow {
+    display: inline-block;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent);
+    background: var(--accent-bg);
+    padding: 4px 10px;
+    border-radius: 999px;
+    margin-bottom: 16px;
+  }
+  h1 {
+    font-size: clamp(28px, 4.5vw, 40px);
+    line-height: 1.15;
+    margin: 0 0 16px;
+  }
+  .lede {
+    font-size: 18px;
+    color: var(--text-dim);
+    max-width: 62ch;
+    margin: 0 0 24px;
+  }
+  .cta-row { display: flex; gap: 12px; flex-wrap: wrap; }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 18px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    text-decoration: none;
+    border: 1px solid var(--border);
+  }
+  .btn-primary { background: var(--accent); color: #06231d; border-color: var(--accent); }
+  .btn-ghost { color: var(--text); background: var(--surface); }
+
+  section { margin-top: 56px; }
+  h2 {
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin: 0 0 20px;
+  }
+
+  .flow {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 20px 20px 0;
+    overflow-x: auto;
+  }
+  .flow ol {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    min-width: max-content;
+  }
+  .flow li {
+    flex: 0 0 auto;
+    padding: 0 28px;
+    position: relative;
+    font-size: 14px;
+  }
+  .flow li:not(:last-child)::after {
+    content: "→";
+    position: absolute;
+    right: -2px;
+    top: 4px;
+    color: var(--text-dim);
+  }
+  .flow .step-title { font-weight: 600; margin-bottom: 4px; }
+  .flow .step-sub { color: var(--text-dim); font-size: 12.5px; }
+
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 16px;
+  }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 20px;
+  }
+  .card h3 { font-size: 15px; margin: 0 0 8px; }
+  .card p { font-size: 13.5px; color: var(--text-dim); margin: 0; }
+
+  .cascade {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    font-size: 14px;
+  }
+  .cascade .tier {
+    display: flex;
+    justify-content: space-between;
+    padding: 10px 0;
+    border-bottom: 1px dashed var(--border);
+  }
+  .cascade .tier:last-child { border-bottom: none; }
+  .cascade .tier .name { font-weight: 600; }
+  .cascade .tier .note { color: var(--text-dim); font-size: 13px; }
+
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 18px;
+    overflow-x: auto;
+    font-size: 13px;
+  }
+  code { font-family: "SF Mono", Consolas, monospace; }
+
+  footer {
+    margin-top: 64px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border);
+    font-size: 13px;
+    color: var(--text-dim);
+  }
+  footer a { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <span class="eyebrow">Research Prototype</span>
+    <h1>LLM-Assisted Vulnerability Detection &amp; Automated Remediation in CI/CD Pipelines</h1>
+    <p class="lede">
+      An autonomous agent that scans pushed code for vulnerabilities inside an
+      isolated sandbox, generates a fix through a cost-tiered LLM cascade,
+      validates it against the project's own tests, and opens a pull request —
+      no human in the loop.
+    </p>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="https://github.com/ArdenDiago/llm-assisted-vulnerability-detection-and-automated-remediation-in-cicd-pipelines">View on GitHub</a>
+      <a class="btn btn-ghost" href="https://github.com/ArdenDiago/llm-assisted-vulnerability-detection-and-automated-remediation-in-cicd-pipelines#setup">Setup instructions</a>
+    </div>
+  </header>
+
+  <section>
+    <h2>Pipeline</h2>
+    <div class="flow">
+      <ol>
+        <li><div class="step-title">Push event</div><div class="step-sub">webhook listener</div></li>
+        <li><div class="step-title">Clone</div><div class="step-sub">host-side, read-only checkout</div></li>
+        <li><div class="step-title">Sandbox scan</div><div class="step-sub">Docker, network-isolated</div></li>
+        <li><div class="step-title">Findings</div><div class="step-sub">Bandit · Semgrep · Gitleaks · Trivy</div></li>
+        <li><div class="step-title">LLM cascade</div><div class="step-sub">fix generation + confidence scoring</div></li>
+        <li><div class="step-title">Validate</div><div class="step-sub">project's own test suite</div></li>
+        <li><div class="step-title">Open PR</div><div class="step-sub">GitHub API</div></li>
+      </ol>
+    </div>
+  </section>
+
+  <section>
+    <h2>Model escalation cascade</h2>
+    <div class="cascade">
+      <div class="tier">
+        <span class="name">1. DeepSeek Coder</span>
+        <span class="note">free, local via Ollama — always tried first</span>
+      </div>
+      <div class="tier">
+        <span class="name">2. Claude Haiku</span>
+        <span class="note">classification, confidence scoring, PR body text</span>
+      </div>
+      <div class="tier">
+        <span class="name">3. Claude Sonnet</span>
+        <span class="note">escalated fix when confidence is low</span>
+      </div>
+      <div class="tier">
+        <span class="name">4. Claude Opus</span>
+        <span class="note">absolute last resort, third attempt only</span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>What it does</h2>
+    <div class="cards">
+      <div class="card">
+        <h3>Isolated scanning</h3>
+        <p>Every push is scanned inside an ephemeral, network-disabled Docker container — the target repo is never trusted with network access.</p>
+      </div>
+      <div class="card">
+        <h3>Cost-aware fixes</h3>
+        <p>Escalates to a paid model only when a cheaper one reports low confidence, never the other way around.</p>
+      </div>
+      <div class="card">
+        <h3>Test-gated PRs</h3>
+        <p>A generated fix is re-run against the project's existing test suite before any branch is pushed — a failing suite blocks the PR.</p>
+      </div>
+      <div class="card">
+        <h3>Four scanners, one report</h3>
+        <p>Bandit, Semgrep, Gitleaks, and Trivy findings are normalized and deduplicated into a single JSON envelope.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Quickstart</h2>
+    <pre><code>git clone https://github.com/ArdenDiago/llm-assisted-vulnerability-detection-and-automated-remediation-in-cicd-pipelines.git
+cd llm-assisted-vulnerability-detection-and-automated-remediation-in-cicd-pipelines
+pip install -r requirements.txt
+ollama pull deepseek-coder:6.7b
+docker build -t llm-cicd-agent:latest .
+pytest tests/</code></pre>
+  </section>
+
+  <footer>
+    Research prototype — see the
+    <a href="https://github.com/ArdenDiago/llm-assisted-vulnerability-detection-and-automated-remediation-in-cicd-pipelines">GitHub repository</a>
+    for full setup instructions, architecture notes, and known limitations.
+  </footer>
+
+</div>
+</body>
+</html>

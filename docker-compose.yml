@@ -6,7 +6,7 @@ services:
     ports:
       - "${PORT:-3000}:3000"
     env_file:
-      - ../.env
+      - .env
     depends_on:
       - agent
     restart: unless-stopped
@@ -17,7 +17,7 @@ services:
       context: .
       dockerfile: Dockerfile
     env_file:
-      - ../.env
+      - .env
     volumes:
       # Root-equivalent host access — needed so manager.py can spin up
       # per-push sandbox containers via docker-py. See "Control-Plane
