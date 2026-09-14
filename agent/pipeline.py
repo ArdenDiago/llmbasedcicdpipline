@@ -44,7 +44,7 @@ class PipelineResult:
         }
 
 
-def default_file_reader(repo_path: Path, rel: str) -> str:
+def _relativize(rel: str) -> str:
     """Scanners run inside the sandbox container, where the checkout is
     bind-mounted read-only at REPO_BIND_PATH ("/workspace") — see
     container.py — so every finding's "file" field is an absolute path
@@ -52,9 +52,14 @@ def default_file_reader(repo_path: Path, rel: str) -> str:
     directory clone.py created, which has a different, per-run name).
     `repo_path / rel` silently discards repo_path for an absolute rel
     (pathlib join semantics), so without stripping the mount prefix first,
-    this would try to read "/workspace/..." on the host — which doesn't
-    exist there — and every real finding would fail closed as a silent
-    "read error" skip. evaluation/scan.py's _relativize() hits the same
+    a file read would try "/workspace/..." on the host — which doesn't
+    exist there — and a PR write (creator.py's write_full_file, which uses
+    a finding's "file" field the same way) would resolve outside repo_path
+    entirely and get rejected as "escapes repo". Shared by every consumer
+    of a finding's "file" field (file_reader, the fix/PR-body prompts,
+    creator.py's write target, branch naming, commit messages) so they all
+    see the same relative path instead of each needing its own copy of
+    this strip. evaluation/scan.py's _relativize() hits the same
     absolute-path issue for its own (offline, non-live) purposes."""
     rel_path = Path(rel)
     if rel_path.is_absolute():
@@ -62,7 +67,11 @@ def default_file_reader(repo_path: Path, rel: str) -> str:
             rel_path = rel_path.relative_to(REPO_BIND_PATH)
         except ValueError:
             pass
-    return (repo_path / rel_path).read_text(encoding="utf-8", errors="replace")
+    return str(rel_path)
+
+
+def default_file_reader(repo_path: Path, rel: str) -> str:
+    return (repo_path / _relativize(rel)).read_text(encoding="utf-8", errors="replace")
 
 
 def default_pr_body(
@@ -142,6 +151,13 @@ def run(
         if not _eligible(finding, min_severity):
             result.skipped.append({"finding": finding, "reason": "below min_severity"})
             continue
+
+        # Every downstream consumer (prompts, PR title/body, branch naming,
+        # commit messages, and creator.py's write target) must see the same
+        # repo-relative path, not the sandbox's "/workspace/..." mount path
+        # — see _relativize()'s docstring for why creator.py's write would
+        # otherwise reject every real finding as "escapes repo".
+        finding = {**finding, "file": _relativize(finding.get("file", ""))}
 
         try:
             file_contents = file_reader(repo_path, finding.get("file", ""))
