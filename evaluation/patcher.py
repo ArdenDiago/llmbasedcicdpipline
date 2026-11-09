@@ -126,7 +126,9 @@ def _validate(path: Path) -> tuple[bool, str | None]:
                 return True, None
             return False, f"node --check: {r.stderr.strip().splitlines()[-1] if r.stderr else 'failed'}"
         except FileNotFoundError:
-            return True, None  # node not installed — don't penalize
+            # Without node the syntax cannot be checked; never report an
+            # unchecked JavaScript file as parsing (it used to pass here).
+            return False, "node not installed: cannot check JS syntax"
         except subprocess.TimeoutExpired:
             return False, "node --check timed out"
 

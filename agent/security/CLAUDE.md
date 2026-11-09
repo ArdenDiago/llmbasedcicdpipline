@@ -59,7 +59,11 @@ JSON output for the LLM layer to analyze.
                         sandbox pipeline. Used solely by evaluation/ to
                         benchmark detection quality against the deployed
                         four-scanner set; see the module's own docstring.
-- normalize.py        → Unified format conversion and dedup
+- normalize.py        → Unified format conversion and dedup; also
+                        `finding_still_present()`, the post-repair re-scan
+                        rule used by the PR gate (same file; same rule, or
+                        same CWE at equal-or-higher severity; lines ignored)
+                        and `cwes_match()`, shared with evaluation/metrics.py
 
 ## Rules
 - ALL scanner output MUST be JSON — no plaintext parsing

@@ -6,6 +6,10 @@ of the source tree, re-scan with semgrep+bandit, and score:
   - fix_accuracy: % vulns where the original CWE no longer appears in the
                   patched file (bandit/semgrep re-scan, no line tol).
   - fix_safety:   % patches that still parse (Python: ast, JS: node --check).
+  - fixed_live:   per-attempt column; the live PR gate's stricter-on-rule,
+                  severity-aware rule (agent.security.normalize.
+                  finding_still_present) applied to the same re-scan, so
+                  the benchmark can report both definitions side by side.
   - cost:         tokens_in / tokens_out / wallclock_ms per model.
 
 All LLM calls go through agent.llm.cache.CachedClient — first run pays full
@@ -37,6 +41,7 @@ from agent.llm import prompts
 from agent.llm.cache import CachedClient
 from agent.llm.clients.base import LLMResponse
 from agent.security.scanners import bandit as bandit_scanner
+from agent.security.normalize import finding_still_present
 from agent.security.scanners import semgrep as semgrep_scanner
 from evaluation import metrics as eval_metrics
 from evaluation import patcher as patch_mod
@@ -86,6 +91,7 @@ class FixAttempt:
     rescan_findings: int
     cache_hit: bool
     error: str | None = None
+    fixed_live: bool = False
 
 
 @dataclass
@@ -140,7 +146,18 @@ def true_positives(
     Mirrors evaluation.metrics._matches; one ground-truth entry can be
     matched at most once.
     """
-    tps: list[dict] = []
+    return [t for t, _ in true_positive_pairs(ground_truth, agent_findings, line_tolerance)]
+
+
+def true_positive_pairs(
+    ground_truth: list[dict],
+    agent_findings: list[dict],
+    line_tolerance: int = 3,
+) -> list[tuple[dict, dict]]:
+    """Same matching as true_positives(), but keeps the agent finding that
+    detected each ground-truth entry (its scanner/rule/severity is what the
+    live gate's re-scan rule needs)."""
+    pairs: list[tuple[dict, dict]] = []
     matched_truth: set[int] = set()
     for f in agent_findings:
         for idx, t in enumerate(ground_truth):
@@ -148,9 +165,9 @@ def true_positives(
                 continue
             if eval_metrics._matches(f, t, line_tolerance):
                 matched_truth.add(idx)
-                tps.append(t)
+                pairs.append((t, f))
                 break
-    return tps
+    return pairs
 
 
 def build_client(model_spec: str, cache_dir: Path):
@@ -158,6 +175,7 @@ def build_client(model_spec: str, cache_dir: Path):
     if ":" not in model_spec:
         raise ValueError(f"bad model spec '{model_spec}', expected provider:model_id")
     provider, model_id = model_spec.split(":", 1)
+    model_id = model_id.removesuffix(TRAIN_SHAPE_SUFFIX)
 
     if provider == "ollama":
         from agent.llm.clients.ollama import OllamaClient
@@ -184,15 +202,34 @@ def rescan_file(workdir: Path, target_relpath: str, cwe: str, line_tol: int = 10
     line_tol is intentionally large — patch may shift lines. We say "fixed"
     when no finding with that CWE survives in the target file at all.
     """
+    target_findings, status = rescan_with_status(workdir, target_relpath)
+    if any(s != "ok" for s in status.values()):
+        return True, len(target_findings)  # incomplete re-scan never counts as fixed
+    cwe_present = any(eval_metrics._cwes_match(f.get("cwe", ""), cwe) for f in target_findings)
+    return cwe_present, len(target_findings)
+
+
+def rescan_target_findings(workdir: Path, target_relpath: str) -> list[dict]:
+    """Bandit+Semgrep findings in the patched target file, with "file" made
+    relative to workdir."""
+    return rescan_with_status(workdir, target_relpath)[0]
+
+
+def rescan_with_status(workdir: Path, target_relpath: str) -> tuple[list[dict], dict[str, str]]:
+    """Like rescan_target_findings, plus each scanner's status ("ok" or
+    "error"), so callers can refuse to score an incomplete re-scan."""
     findings: list[dict] = []
+    status: dict[str, str] = {}
     for runner in (bandit_scanner, semgrep_scanner):
         try:
             res, scan_errors = runner.run(str(workdir), timeout=120)
             for err in scan_errors:
                 logger.warning("rescan %s reported an error: %s", runner.NAME, err)
             findings.extend(f.to_dict() for f in res)
+            status[runner.NAME] = "error" if scan_errors else "ok"
         except Exception as exc:
             logger.warning("rescan %s failed: %s", runner.NAME, exc)
+            status[runner.NAME] = "error"
 
     target_findings = []
     for f in findings:
@@ -202,10 +239,8 @@ def rescan_file(workdir: Path, target_relpath: str, cwe: str, line_tol: int = 10
         except (ValueError, OSError):
             f_rel = f_file
         if f_rel == target_relpath or f_rel.endswith("/" + target_relpath):
-            target_findings.append(f)
-
-    cwe_present = any(eval_metrics._cwes_match(f.get("cwe", ""), cwe) for f in target_findings)
-    return cwe_present, len(target_findings)
+            target_findings.append({**f, "file": target_relpath})
+    return target_findings, status
 
 
 def _close_train_shape_fence(text: str) -> str:
@@ -227,8 +262,19 @@ def _is_adapter_spec(model_spec: str) -> bool:
     return model_spec.startswith("hf:") and "+" in model_spec.split(":", 1)[1]
 
 
+# "hf:<base>@train-shape" runs the untouched base model under exactly the
+# adapters' conditions (train-shape prompt with only the file, greedy
+# decoding, fence closing), so base and adapter can be compared with prompt
+# and decoding held fixed.
+TRAIN_SHAPE_SUFFIX = "@train-shape"
+
+
+def _uses_train_shape(model_spec: str) -> bool:
+    return _is_adapter_spec(model_spec) or model_spec.endswith(TRAIN_SHAPE_SUFFIX)
+
+
 def render_fix_prompt(vuln: dict, file_content: str, model_spec: str = "") -> str:
-    if _is_adapter_spec(model_spec):
+    if _uses_train_shape(model_spec):
         return prompts.render(
             "fix_single_file_train_shape",
             file_content=file_content,
@@ -257,6 +303,7 @@ def run_one(
     model_spec: str,
     client: CachedClient,
     max_tokens: int,
+    orig_finding: dict | None = None,
 ) -> FixAttempt:
     target_rel = vuln["file"]
     target_path = source_root / target_rel
@@ -277,7 +324,7 @@ def run_one(
     # Adapter is heavily overfit on bigvul; greedy decoding is more reliable
     # for it than the default 0.2 sampling. Other models keep the default.
     complete_kwargs: dict[str, Any] = {"max_tokens": max_tokens}
-    if _is_adapter_spec(model_spec):
+    if _uses_train_shape(model_spec):
         complete_kwargs["temperature"] = 0.0
     try:
         resp: LLMResponse = client.complete(prompt, **complete_kwargs)
@@ -298,7 +345,7 @@ def run_one(
         return attempt
 
     new_content = resp.text
-    if _is_adapter_spec(model_spec):
+    if _uses_train_shape(model_spec):
         new_content = _close_train_shape_fence(new_content)
 
     try:
@@ -318,9 +365,24 @@ def run_one(
         attempt.fixed_reason = f"parse fail: {patch.parse_error}"
         return attempt
 
-    cwe_present, n_findings = rescan_file(patch.workdir, target_rel, attempt.cwe)
-    attempt.rescan_findings = n_findings
+    target_findings, status = rescan_with_status(patch.workdir, target_rel)
+    attempt.rescan_findings = len(target_findings)
+    if any(s != "ok" for s in status.values()):
+        # An incomplete re-scan is not evidence of a fix (it used to count
+        # as one: no findings came back, so no CWE was "still present").
+        attempt.error = f"rescan incomplete: {status}"
+        attempt.fixed = False
+        attempt.fixed_live = False
+        attempt.fixed_reason = "rescan incomplete"
+        return attempt
+    cwe_present = any(eval_metrics._cwes_match(f.get("cwe", ""), attempt.cwe) for f in target_findings)
     attempt.fixed = not cwe_present
+    if orig_finding is not None:
+        still = finding_still_present(
+            {"scanners": status, "findings": target_findings},
+            {**orig_finding, "file": target_rel},
+        )
+        attempt.fixed_live = still is False
     attempt.fixed_reason = (
         f"CWE {attempt.cwe} no longer in {target_rel}"
         if not cwe_present else f"CWE {attempt.cwe} still flagged"
@@ -353,7 +415,8 @@ def evaluate(
             logger.warning("skip missing dataset %s", ds_name)
             continue
         truth, agent_findings = load_truth_and_agent(ds_dir)
-        tps = true_positives(truth, agent_findings)
+        pairs = true_positive_pairs(truth, agent_findings)
+        tps = [t for t, _ in pairs]
         logger.info("dataset %s: %d TPs out of %d ground truth", ds_name, len(tps), len(truth))
 
         source_root = ds_dir / "source"
@@ -361,7 +424,7 @@ def evaluate(
             logger.warning("dataset %s has no source/, skipping", ds_name)
             continue
 
-        for vuln_idx, vuln in enumerate(tps):
+        for vuln_idx, (vuln, orig_finding) in enumerate(pairs):
             for model_spec in models:
                 if is_paid(model_spec) and paid_count[model_spec] >= cap_paid_fixes:
                     logger.info("paid cap reached for %s, skipping vuln %d", model_spec, vuln_idx)
@@ -372,6 +435,7 @@ def evaluate(
                     dataset=ds_name, vuln_index=vuln_idx, vuln=vuln,
                     source_root=source_root, workdir_root=workdir_root,
                     model_spec=model_spec, client=client, max_tokens=max_tokens,
+                    orig_finding=orig_finding,
                 )
                 all_attempts.append(attempt)
                 summaries[model_spec].attempts += 1

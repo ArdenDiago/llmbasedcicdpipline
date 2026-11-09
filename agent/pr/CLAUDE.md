@@ -14,10 +14,14 @@ committing, and PR body generation.
 2. Create feature branch: fix/<scanner>-<rule_id>-<short_hash>
 3. Apply patch to cloned repo
 4. Run test suite on patched code (validation)
-5. If tests pass → commit and push
-6. Generate PR body via LLM (Haiku — see model balancing)
-7. Create PR via GitHub API
-8. Add labels: automated-fix, security, <severity>
+5. Re-scan the patched code (same sandbox run as step 4) and require the
+   original finding to be gone — see `finding_still_present` in
+   agent/security/normalize.py. A re-scan that could not run counts as
+   not verified.
+6. If tests pass and the finding is cleared → commit and push
+7. Generate PR body via LLM (Haiku — see model balancing)
+8. Create PR via GitHub API
+9. Add labels: automated-fix, security, <severity>
 
 ## Files
 - creator.py          → Orchestrates PR creation workflow
@@ -50,6 +54,7 @@ committing, and PR body generation.
 ## Rules
 - NEVER push to main/master directly — always use feature branches
 - NEVER create a PR if validation tests fail
+- NEVER create a PR if the re-scan still reports the finding, or could not run
 - Always include the confidence score in PR body
 - PR title format: "fix({scanner}): {short_description}"
 - One PR per finding — do not batch unrelated fixes

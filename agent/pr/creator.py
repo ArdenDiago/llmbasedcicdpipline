@@ -1,7 +1,10 @@
 """Orchestrates PR creation: branch → patch → validate → commit → push → PR.
 
 Follows the flow in agent/pr/CLAUDE.md. Validation runs the test suite
-against the patched clone; a failing suite aborts PR creation.
+against the patched clone; a failing suite aborts PR creation. When a
+`rescan` callable is supplied, the patched clone is also re-scanned and a
+PR is only opened if the original finding is gone (same check as the
+offline benchmark, see normalize.finding_still_present).
 """
 from __future__ import annotations
 
@@ -11,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from ..security.normalize import finding_still_present
 from . import brancher, committer, github_api
 
 logger = logging.getLogger(__name__)
@@ -31,7 +35,11 @@ class PRRequest:
     repo_full_name: str
     base_branch: str
     commit_sha: str
-    pr_body: str
+    # Either the finished body, or a zero-arg callable that produces it.
+    # The pipeline passes a callable so the (possibly paid) PR-body call
+    # only happens for a patch that has already passed validation and the
+    # re-scan, never for a rejected one.
+    pr_body: str | Callable[[], str]
 
 
 @dataclass
@@ -43,6 +51,9 @@ class PRResult:
 
 
 ValidateFn = Callable[[Path], bool]
+# Returns the run_scan.run_all() envelope for the patched repo (or None if
+# the re-scan could not run).
+RescanFn = Callable[[Path], dict[str, Any] | None]
 
 
 def _title_for(finding: dict[str, Any]) -> str:
@@ -63,12 +74,18 @@ def create_pr(
     req: PRRequest,
     validate: ValidateFn,
     client: github_api._GithubLike | None = None,
+    rescan: RescanFn | None = None,
 ) -> PRResult:
     """Run the full PR creation workflow.
 
     `validate` runs the project's test suite against the patched clone and
     returns True if tests pass. A False result aborts PR creation per
     CLAUDE.md ("NEVER create a PR if validation tests fail").
+
+    `rescan`, when given, re-runs the scanners on the patched clone after
+    validation. The PR is skipped if the original finding is still reported,
+    or if the re-scan could not answer (fail closed: an unverified fix is not
+    a verified one).
     """
     if not req.fixed_content.strip():
         return PRResult(created=False, branch="", skipped_reason="empty fix content")
@@ -101,6 +118,17 @@ def create_pr(
             skipped_reason="validation tests failed",
         )
 
+    if rescan is not None:
+        still_present = finding_still_present(rescan(req.repo_path), req.finding)
+        if still_present is None:
+            return PRResult(created=False, branch=branch, skipped_reason="re-scan unavailable")
+        if still_present:
+            return PRResult(created=False, branch=branch, skipped_reason="finding still flagged on re-scan")
+
+    # Body is produced only now that the patch passed both gates, and before
+    # anything is committed or pushed, so a failure here leaves no branch.
+    body = req.pr_body() if callable(req.pr_body) else req.pr_body
+
     message = committer.commit_message(req.finding, req.confidence, req.model_used)
     committer.commit_all(req.repo_path, message)
     # Same env var github_api.default_client() reads for the PyGithub REST
@@ -118,7 +146,7 @@ def create_pr(
         client=gh,
         repo_full_name=req.repo_full_name,
         title=_title_for(req.finding),
-        body=req.pr_body,
+        body=body,
         head=branch,
         base=req.base_branch,
         labels=_labels_for(req.finding),

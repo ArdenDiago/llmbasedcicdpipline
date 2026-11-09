@@ -60,7 +60,7 @@ def test_filters_by_min_severity(tmp_path: Path, clients, monkeypatch):
     ]
     monkeypatch.setattr(pipeline, "default_file_reader", lambda p, r: "src")
     monkeypatch.setattr(analyzer, "analyze_finding", lambda **kw: _fix())
-    monkeypatch.setattr(creator, "create_pr", lambda req, validate, client=None: creator.PRResult(
+    monkeypatch.setattr(creator, "create_pr", lambda req, validate, client=None, rescan=None: creator.PRResult(
         created=True, branch="b", pr=github_api.PullRequestRef(1, "u", "b", "main"),
     ))
 
@@ -146,7 +146,7 @@ def test_happy_path_creates_one_pr_per_finding(tmp_path: Path, clients, monkeypa
     calls = []
     monkeypatch.setattr(analyzer, "analyze_finding", lambda **kw: _fix())
 
-    def fake_create_pr(req, validate, client=None):
+    def fake_create_pr(req, validate, client=None, rescan=None):
         calls.append(req.finding["rule_id"])
         return creator.PRResult(
             created=True, branch="b", pr=github_api.PullRequestRef(len(calls), "u", "b", "main"),
@@ -176,7 +176,7 @@ def test_base_branch_defaults_to_dispatch_branch_not_main(tmp_path: Path, client
 
     captured_base_branches = []
 
-    def fake_create_pr(req, validate, client=None):
+    def fake_create_pr(req, validate, client=None, rescan=None):
         captured_base_branches.append(req.base_branch)
         return creator.PRResult(created=True, branch="b", pr=None)
 
@@ -234,8 +234,8 @@ def test_default_pr_body_calls_haiku_instead_of_returning_raw_prompt(
 
     captured_bodies = []
 
-    def fake_create_pr(req, validate, client=None):
-        captured_bodies.append(req.pr_body)
+    def fake_create_pr(req, validate, client=None, rescan=None):
+        captured_bodies.append(req.pr_body() if callable(req.pr_body) else req.pr_body)
         return creator.PRResult(created=True, branch="b", pr=None)
 
     monkeypatch.setattr(creator, "create_pr", fake_create_pr)
@@ -263,7 +263,7 @@ def test_explicit_base_branch_overrides_dispatch_branch(tmp_path: Path, clients,
 
     captured_base_branches = []
 
-    def fake_create_pr(req, validate, client=None):
+    def fake_create_pr(req, validate, client=None, rescan=None):
         captured_base_branches.append(req.base_branch)
         return creator.PRResult(created=True, branch="b", pr=None)
 
@@ -304,7 +304,7 @@ def test_create_pr_failure_does_not_abort_rest_of_batch(tmp_path: Path, clients,
 
     calls = []
 
-    def flaky_create_pr(req, validate, client=None):
+    def flaky_create_pr(req, validate, client=None, rescan=None):
         calls.append(req.finding["rule_id"])
         if req.finding["rule_id"] == "B1":
             raise creator.committer.CommitError("git push -u origin fix/x failed (128): non-fast-forward")
@@ -338,7 +338,7 @@ def test_branch_already_exists_gets_a_specific_skip_reason(tmp_path: Path, clien
     findings = [{"scanner": "bandit", "rule_id": "B1", "severity": "high", "file": "a.py"}]
     monkeypatch.setattr(analyzer, "analyze_finding", lambda **kw: _fix())
 
-    def already_exists(req, validate, client=None):
+    def already_exists(req, validate, client=None, rescan=None):
         raise creator.committer.BranchAlreadyExistsError("non-fast-forward")
 
     monkeypatch.setattr(creator, "create_pr", already_exists)
@@ -375,7 +375,7 @@ def test_analyze_finding_failure_does_not_abort_rest_of_batch(tmp_path: Path, cl
 
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(analyzer, "analyze_finding", flaky_analyze)
-        mp.setattr(creator, "create_pr", lambda req, validate, client=None: creator.PRResult(
+        mp.setattr(creator, "create_pr", lambda req, validate, client=None, rescan=None: creator.PRResult(
             created=True, branch="b", pr=github_api.PullRequestRef(1, "u", "b", "main"),
         ))
 
@@ -437,3 +437,45 @@ def test_accepts_scanners_as_list(tmp_path: Path, clients, monkeypatch):
         file_reader=lambda p, r: "src", pr_body=lambda f, fix: "body",
     )
     assert res.processed == 1
+
+
+def test_offline_mode_never_calls_haiku_for_pr_body(tmp_path: Path, monkeypatch):
+    """AGENT_OFFLINE=1 promises no hosted-model call; the PR body must be
+    built locally, and only for a patch that passed the gate."""
+    monkeypatch.setenv("AGENT_OFFLINE", "1")
+    finding = {"scanner": "bandit", "rule_id": "B602", "severity": "high", "cwe": "CWE-78",
+               "file": "a.py", "line": 3, "message": "shell=True"}
+    monkeypatch.setattr(analyzer, "analyze_finding", lambda **kw: _fix())
+    haiku = MagicMock()
+    haiku.complete.side_effect = AssertionError("Haiku called in offline mode")
+    offline_clients = analyzer.ClientSet(deepseek=MagicMock(), haiku=haiku, sonnet=MagicMock(), opus=MagicMock())
+    bodies = []
+
+    def fake_create_pr(req, validate, client=None, rescan=None):
+        bodies.append(req.pr_body())
+        return creator.PRResult(created=True, branch="b", pr=None)
+
+    monkeypatch.setattr(creator, "create_pr", fake_create_pr)
+    pipeline.run(envelope=_envelope([finding]), repo_path=tmp_path, clients=offline_clients,
+                 config=_config(), validate=lambda _: True, github_client=MagicMock(),
+                 file_reader=lambda p, r: "src")
+    assert len(bodies) == 1
+    assert "**Rule:** B602" in bodies[0] and "offline mode" in bodies[0]
+    haiku.complete.assert_not_called()
+
+
+def test_pr_body_not_generated_when_gate_rejects(tmp_path: Path, monkeypatch):
+    """A rejected patch must not cost a PR-body call."""
+    from agent.pr import committer as committer_mod
+    for name in ("reset_to_base", "create_branch", "write_full_file"):
+        monkeypatch.setattr(committer_mod, name, lambda *a, **k: None)
+    calls = []
+    req = creator.PRRequest(
+        finding={"scanner": "bandit", "rule_id": "B602", "file": "a.py", "line": 1},
+        fixed_content="x = 1\n", confidence=0.9, model_used="m", repo_path=tmp_path,
+        repo_full_name="o/r", base_branch="main", commit_sha="c",
+        pr_body=lambda: calls.append(1) or "body",
+    )
+    res = creator.create_pr(req, validate=lambda _: False, client=MagicMock())
+    assert res.skipped_reason == "validation tests failed"
+    assert calls == []

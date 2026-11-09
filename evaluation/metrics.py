@@ -8,26 +8,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
+# CWE parent links + matching live in agent.security.normalize so the live
+# post-repair re-scan and this benchmark share one definition of "same CWE".
+from agent.security.normalize import CWE_PARENT as _CWE_PARENT  # noqa: F401
+from agent.security.normalize import cwes_match as _cwes_match
+
 DEFAULT_LINE_TOLERANCE = 3
-
-# Narrow set of well-known CWE parent links — lets ground truth use the
-# broader category while still matching scanners that emit the specific child.
-# Keys are children, values are parents. Matching is bidirectional.
-_CWE_PARENT = {
-    "CWE-259": "CWE-798",   # Hardcoded password ⊂ Hardcoded credentials
-    "CWE-321": "CWE-798",   # Hardcoded crypto key ⊂ Hardcoded credentials
-    "CWE-916": "CWE-327",   # Weak password hash ⊂ Broken/risky crypto
-    "CWE-326": "CWE-327",   # Inadequate encryption strength ⊂ Broken crypto
-    "CWE-328": "CWE-327",   # Reversible one-way hash ⊂ Broken crypto
-}
-
-
-def _cwes_match(a: str, b: str) -> bool:
-    if not a or not b:
-        return False
-    if a == b:
-        return True
-    return _CWE_PARENT.get(a) == b or _CWE_PARENT.get(b) == a
 
 
 @dataclass

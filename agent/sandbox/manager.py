@@ -89,12 +89,28 @@ def _default_validate_factory(
     """Validation re-runs the same sandboxed test execution against the
     patched clone — tests run inside the sandbox, never on the host, per
     this package's own CLAUDE.md lifecycle. This is the same container
-    infra used for the initial scan, just pointed at a different repo_path."""
+    infra used for the initial scan, just pointed at a different repo_path.
+
+    That same sandbox run also re-scans the patched tree, so the returned
+    function carries a `rescan` attribute that hands back the scanner
+    envelope from the validation run of that path instead of starting a
+    second container. creator.create_pr() calls validate, then rescan, for
+    the same path; if rescan is called without a prior validate run it
+    runs the sandbox itself."""
+    # ponytail: per-path cache of the last validation run's scan; assumes
+    # create_pr's validate->rescan order on an unchanged tree.
+    last_scan: dict[Path, Any] = {}
+
+    def _scanners(result: Any) -> Any:
+        if result.error or result.timed_out or not result.results:
+            return None
+        return result.results.get("scanners")
 
     def _validate(patched_repo_path: Path) -> bool:
         result = container.run_sandbox(
             docker_client, payload, image_ref, repo_path=patched_repo_path
         )
+        last_scan[patched_repo_path] = _scanners(result)
         if result.error or result.timed_out:
             return False
         tests = (result.results or {}).get("tests") if result.results else None
@@ -124,6 +140,14 @@ def _default_validate_factory(
             return False
         return not tests.get("failed") and not tests.get("errors")
 
+    def _rescan(patched_repo_path: Path) -> Any:
+        if patched_repo_path in last_scan:
+            return last_scan.pop(patched_repo_path)
+        return _scanners(container.run_sandbox(
+            docker_client, payload, image_ref, repo_path=patched_repo_path
+        ))
+
+    _validate.rescan = _rescan  # type: ignore[attr-defined]
     return _validate
 
 
@@ -163,6 +187,7 @@ def _run_fix_pipeline(
             config=balancing_config,
             validate=validate,
             github_client=github_client,
+            rescan=getattr(validate, "rescan", None),
         )
     except Exception as exc:
         logger.exception("fix pipeline failed")

@@ -331,3 +331,51 @@ def test_validate_fails_when_tests_fail(tmp_path_factory):
         {"framework": "pytest", "total": 3, "passed": 2, "failed": 1, "errors": 0},
         tmp_path_factory,
     ) is False
+
+
+def test_rescan_reuses_validation_sandbox_run(tmp_path_factory):
+    """The validation container already re-scans the patched tree; rescan
+    must hand back that run's scanner envelope, not start a second one."""
+    scan = {"scanners": {"bandit": "ok"}, "findings": [], "errors": []}
+    fake_docker = FakeDockerClient(container=FakeContainer(
+        exit_code=0,
+        results_payload={"tests": {"framework": "pytest", "failed": 0, "errors": 0}, "scanners": scan},
+    ))
+    validate = _default_validate_factory(fake_docker, "img:tag", {"repo_full_name": "o/r"})
+    path = tmp_path_factory.mktemp("patched-repo")
+    assert validate(path) is True
+    assert validate.rescan(path) == scan
+    assert fake_docker.containers.create.call_count == 1
+    # no cached run for this path any more -> runs its own sandbox
+    assert validate.rescan(path) == scan
+    assert fake_docker.containers.create.call_count == 2
+
+
+def test_rescan_is_none_when_sandbox_fails(tmp_path_factory):
+    fake_docker = FakeDockerClient(container=FakeContainer(exit_code=0, results_payload=None))
+    validate = _default_validate_factory(fake_docker, "img:tag", {"repo_full_name": "o/r"})
+    assert validate.rescan(tmp_path_factory.mktemp("patched-repo")) is None
+
+
+def test_dispatch_passes_rescan_to_pipeline(tmp_path_factory):
+    seen = {}
+
+    def fake_validate(p):
+        return True
+    fake_validate.rescan = lambda p: None
+
+    def fake_pipeline_run(**kwargs):
+        seen["rescan"] = kwargs.get("rescan")
+        return PipelineResult(processed=0)
+
+    client, _, _ = _client_with_fake_docker(
+        container=_container_with_findings(),
+        tmp_path_factory=tmp_path_factory,
+        pipeline_run_fn=fake_pipeline_run,
+        client_set_factory=lambda cfg: object(),
+        validate_factory=lambda *a, **k: fake_validate,
+        github_client_factory=lambda: object(),
+        balancing_config_fn=lambda: object(),
+    )
+    assert client.post("/dispatch", json=VALID_DISPATCH).status_code == 200
+    assert seen["rescan"] is fake_validate.rescan

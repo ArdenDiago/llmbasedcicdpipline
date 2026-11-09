@@ -31,7 +31,18 @@ RUN curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gi
 # Bandit (pinned in requirements.txt) and Trivy/Gitleaks (pinned above),
 # this was previously unpinned, so a rebuild months later could silently
 # diverge from the reported results without any record of it.
-RUN pip install --no-cache-dir semgrep==1.86.0
+# Installed into its own venv together with njsscan (which depends on
+# semgrep): semgrep 1.86.0 pins pydantic~=2.8.2, which conflicts with
+# fastapi 0.137.2 (pydantic>=2.9) in requirements.txt, so a shared
+# site-packages made `pip install -r requirements.txt` unresolvable and the
+# image could not be built at all. setuptools<81: semgrep's otel
+# instrumentation still imports pkg_resources.
+RUN python -m venv /opt/semgrep-venv \
+    && /opt/semgrep-venv/bin/pip install --no-cache-dir "setuptools<81" semgrep==1.86.0 njsscan==0.4.3
+# Appended, not prepended, so `python`/`pip` still resolve to the system
+# interpreter; semgrep needs its helper `pysemgrep` on PATH, so a symlink
+# to the semgrep binary alone is not enough.
+ENV PATH="${PATH}:/opt/semgrep-venv/bin"
 
 # Pre-fetch the same registry rulesets the evaluation harness uses
 # (evaluation/run_scanners.py) into a fixed, world-readable path, so the

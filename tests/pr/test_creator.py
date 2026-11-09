@@ -212,3 +212,55 @@ def test_working_tree_isolated_across_sequential_findings_real_git(tmp_path: Pat
     # And x.py on the new branch must match the original commit exactly.
     x_on_branch = _git(["show", f"{result2.branch}:x.py"], repo).stdout
     assert x_on_branch == "a = 1\n"
+
+
+# --- post-repair re-scan gate ----------------------------------------------
+def _stub_git(monkeypatch, calls):
+    monkeypatch.setattr(creator.committer, "reset_to_base", lambda *a, **k: None)
+    monkeypatch.setattr(creator.committer, "create_branch", lambda *a, **k: None)
+    monkeypatch.setattr(creator.committer, "write_full_file", lambda *a, **k: None)
+    monkeypatch.setattr(creator.committer, "commit_all", lambda *a, **k: calls.append("commit") or "sha")
+    monkeypatch.setattr(creator.committer, "push", lambda *a, **k: calls.append("push"))
+    ref = github_api.PullRequestRef(number=2, html_url="u", head="h", base="main")
+    monkeypatch.setattr(creator.github_api, "create_pull_request", lambda **kw: calls.append("pr") or ref)
+
+
+def _scan(findings, bandit="ok"):
+    return {"scanners": {"bandit": bandit}, "findings": findings, "errors": []}
+
+
+@pytest.mark.parametrize("scan,reason", [
+    (_scan([{"scanner": "bandit", "rule_id": "B105", "file": "app/auth.py", "line": 50, "cwe": "CWE-259"}]),
+     "finding still flagged on re-scan"),
+    (None, "re-scan unavailable"),
+    (_scan([], bandit="timeout"), "re-scan unavailable"),
+])
+def test_rescan_blocks_pr(tmp_path: Path, finding: dict, monkeypatch, scan, reason):
+    calls: list[str] = []
+    _stub_git(monkeypatch, calls)
+    result = creator.create_pr(_req(tmp_path, finding), validate=lambda _: True,
+                               client=MagicMock(), rescan=lambda p: scan)
+    assert result.created is False
+    assert result.skipped_reason == reason
+    assert calls == []  # nothing committed, pushed or opened
+
+
+def test_rescan_cleared_opens_pr(tmp_path: Path, finding: dict, monkeypatch):
+    calls: list[str] = []
+    _stub_git(monkeypatch, calls)
+    seen = []
+    scan = _scan([{"scanner": "bandit", "rule_id": "B608", "file": "app/auth.py", "line": 3, "cwe": "CWE-89"}])
+    result = creator.create_pr(_req(tmp_path, finding), validate=lambda _: True,
+                               client=MagicMock(), rescan=lambda p: seen.append(p) or scan)
+    assert result.created is True
+    assert seen == [tmp_path]
+    assert calls == ["commit", "push", "pr"]
+
+
+def test_rescan_not_called_when_validation_fails(tmp_path: Path, finding: dict, monkeypatch):
+    _stub_git(monkeypatch, [])
+    called = []
+    result = creator.create_pr(_req(tmp_path, finding), validate=lambda _: False,
+                               client=MagicMock(), rescan=lambda p: called.append(p))
+    assert result.skipped_reason == "validation tests failed"
+    assert called == []
