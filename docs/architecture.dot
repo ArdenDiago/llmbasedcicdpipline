@@ -1,0 +1,59 @@
+// Source for docs/architecture.svg and docs/architecture.png. Rebuild with:
+//   dot -Tsvg architecture.dot -o architecture.svg
+//   rsvg-convert -z 2 architecture.svg -o architecture.png
+digraph agent {
+  graph [rankdir=TB, fontname="Helvetica", bgcolor="white", pad=0.4, nodesep=0.5, ranksep=0.38,
+         label="LLM-assisted CI/CD security agent: from push to pull request\n ", labelloc=t, fontsize=18];
+  node  [fontname="Helvetica", fontsize=12, shape=box, style="rounded,filled", color="#5b6475",
+         fillcolor="#f4f6fa", penwidth=1.2, margin="0.18,0.08"];
+  edge  [fontname="Helvetica", fontsize=10, color="#5b6475", arrowsize=0.8];
+
+  push  [label="GitHub push event\nwebhook listener (Node.js/Express)", fillcolor="#e8eefc"];
+  clone [label="Clone repository on host"];
+
+  subgraph cluster_sandbox {
+    label="";
+    style="rounded,dashed"; color="#8a93a6"; fontsize=11; fontcolor="#3b4252"; labelloc=b; labeljust=l;
+    bandit  [label="Bandit",   fillcolor="#fff7e6"];
+    semgrep [label="Semgrep",  fillcolor="#fff7e6"];
+    trivy   [label="Trivy",    fillcolor="#fff7e6"];
+    gitleaks[label="Gitleaks", fillcolor="#fff7e6"];
+    sbx [label="Docker sandbox per push\nno network, read-only,\nnon-root user", shape=plaintext, style="", fontsize=10, fontcolor="#3b4252"];
+    {rank=same; bandit; semgrep; trivy; gitleaks; sbx}
+  }
+
+  triage [label="Triage (deterministic, no LLM)\nnormalize to (file, line, cwe, message, severity)\nde-duplicate across tools, drop below medium severity"];
+
+  subgraph cluster_cascade {
+    label="LLM repair cascade\n(at most 3 fix attempts)";
+    style="rounded,filled"; fillcolor="#fbfcfe"; color="#8a93a6"; fontsize=11; fontcolor="#3b4252"; labeljust=l;
+    deepseek [label="Attempt 1: DeepSeek Coder 6.7B\nlocal via Ollama, free", fillcolor="#e3f4e8", color="#3f8f5a"];
+    score1   [label="Haiku confidence\nscore >= 0.5?", shape=diamond, style="filled", fillcolor="#eef0fb", color="#5965b8", fontsize=11];
+    classify [label="Haiku classifies\nthe finding", fillcolor="#eef0fb", color="#5965b8"];
+    sonnet   [label="Attempt 2: Claude Sonnet", fillcolor="#eef0fb", color="#5965b8"];
+    score2   [label="Haiku confidence\nscore >= 0.5?", shape=diamond, style="filled", fillcolor="#eef0fb", color="#5965b8", fontsize=11];
+    opus     [label="Attempt 3: Claude Opus\nlast resort", fillcolor="#fbecec", color="#b85959"];
+  }
+
+  gate [label="Validation gate (fresh sandbox run on the patched tree)\n- repository tests pass (if any)\n- re-scan: same rule / same CWE at >= severity is gone\n- any scanner failure = reject", fillcolor="#fff7e6", color="#b8862a"];
+  pr   [label="Write PR text, commit to its own branch,\nopen one PR per finding (GitHub API)", fillcolor="#e8eefc", color="#3f8f5a"];
+  nopr [label="No PR", fillcolor="#f3f3f3", color="#9aa0aa"];
+
+  push -> clone;
+  clone -> {bandit semgrep trivy gitleaks};
+  {bandit semgrep trivy gitleaks} -> triage;
+  triage -> deepseek;
+  deepseek -> score1 [label=" patch"];
+  score1 -> classify [label=" no"];
+  classify -> sonnet [label=" real issue"];
+  sonnet -> score2 [label=" patch"];
+  score2 -> opus [label=" no"];
+  score1 -> gate [label=" yes", color="#3f8f5a", fontcolor="#3f8f5a"];
+  score2 -> gate [label=" yes", color="#3f8f5a", fontcolor="#3f8f5a"];
+  opus -> gate [label=" patch"];
+  deepseek -> gate [label=" AGENT_OFFLINE=1:\n no Haiku, local PR template", style=dashed, color="#7a7a7a", fontcolor="#555555"];
+  classify -> nopr [label=" spurious", style=dashed];
+  gate -> pr [label=" pass", color="#3f8f5a", fontcolor="#3f8f5a"];
+  gate -> nopr [label=" fail", color="#b85959", fontcolor="#b85959"];
+  {rank=same; pr; nopr}
+}

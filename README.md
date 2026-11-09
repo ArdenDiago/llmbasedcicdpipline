@@ -7,27 +7,10 @@ without a human in the loop.
 
 ## How it works
 
-```
-push event → clone (host) → sandbox scan (Docker, network-isolated)
-                                   │
-                    Bandit / Semgrep / Gitleaks / Trivy
-                                   │
-                             findings (JSON)
-                                   │
-                    LLM escalation cascade (agent/llm/analyzer.py)
-                                   │
-      DeepSeek Coder (free, local) ──low confidence──► Haiku (classify)
-                                                            │
-                                              not spurious  ▼
-                                                   Sonnet (fix + re-score)
-                                                            │
-                                              still low     ▼
-                                                   Opus (last resort)
-                                   │
-                     validate fix against project test suite
-                                   │
-                        commit → push → open PR (GitHub API)
-```
+![Architecture: push to pull request](docs/architecture.png)
+
+Source: [`docs/architecture.dot`](docs/architecture.dot) (Graphviz; a
+scalable [`docs/architecture.svg`](docs/architecture.svg) is alongside).
 
 Model selection follows a strict escalation order — cheapest/free model
 first, more capable (and expensive) models only on demand. See
